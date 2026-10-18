@@ -9,6 +9,24 @@ describe("Express Adapter Integration", () => {
   let server;
   let serverUrl;
 
+  const mockDLQJobs = [
+    {
+      id: "failed-job-1",
+      data: { to: "user@example.com" },
+      attempt: 3,
+      stalledCount: 0,
+      createdAt: 1776500000000,
+      failedAt: 1776500030000,
+      failureReason: "SMTP 550: User unknown"
+    },
+    {
+      id: null,
+      raw: "{\"corrupted_json",
+      corrupted: true,
+      error: "Unexpected end of JSON input"
+    }
+  ];
+
   const mockEmailQueue = {
     isClosed: false,
     isPaused: async () => false,
@@ -16,14 +34,19 @@ describe("Express Adapter Integration", () => {
       waiting: 15,
       active: 2,
       delayed: 0,
-      dlq: 1
+      dlq: 2
+    }),
+    getDLQ: async (opts) => ({
+      total: 2,
+      jobs: mockDLQJobs
     })
   };
 
   const mockClosedQueue = {
     isClosed: true,
     isPaused: async () => false,
-    getMetrics: async () => ({})
+    getMetrics: async () => ({}),
+    getDLQ: async () => ({ total: 0, jobs: [] })
   };
 
   before(async () => {
@@ -60,58 +83,130 @@ describe("Express Adapter Integration", () => {
     }
   });
 
-  it("should return 200 OK with correct JSON payload for registered queue", async () => {
-    const res = await fetch(`${serverUrl}/api/queues/email-queue/metrics`);
-    assert.equal(res.status, 200);
-    assert.match(res.headers.get("content-type"), /application\/json/);
+  describe("GET /api/queues/:queueName/metrics", () => {
+    it("should return 200 OK with correct JSON payload for registered queue", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/email-queue/metrics`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get("content-type"), /application\/json/);
 
-    const data = await res.json();
-    assert.deepEqual(data, {
-      queue: "email-queue",
-      isPaused: false,
-      metrics: {
-        waiting: 15,
-        active: 2,
-        delayed: 0,
-        dlq: 1
-      }
+      const data = await res.json();
+      assert.deepEqual(data, {
+        queue: "email-queue",
+        isPaused: false,
+        metrics: {
+          waiting: 15,
+          active: 2,
+          delayed: 0,
+          dlq: 2
+        }
+      });
+    });
+
+    it("should return 404 Not Found for unregistered queue", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/unknown-queue/metrics`);
+      assert.equal(res.status, 404);
+
+      const data = await res.json();
+      assert.deepEqual(data, {
+        error: {
+          code: "QUEUE_NOT_FOUND",
+          message: "Queue 'unknown-queue' is not registered with the dashboard adapter",
+          details: null
+        }
+      });
+    });
+
+    it("should return 503 Service Unavailable when queue is closed", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/closed-queue/metrics`);
+      assert.equal(res.status, 503);
+
+      const data = await res.json();
+      assert.deepEqual(data, {
+        error: {
+          code: "QUEUE_CLOSED",
+          message: "Queue is closed",
+          details: null
+        }
+      });
+    });
+
+    it("should fall through to next() for unmatched routes", async () => {
+      const res = await fetch(`${serverUrl}/unmatched/path`);
+      assert.equal(res.status, 404);
+
+      const data = await res.json();
+      assert.equal(data.message, "Handled by downstream next()");
     });
   });
 
-  it("should return 404 Not Found for unregistered queue", async () => {
-    const res = await fetch(`${serverUrl}/api/queues/unknown-queue/metrics`);
-    assert.equal(res.status, 404);
+  describe("GET /api/queues/:queueName/dlq", () => {
+    it("should return 200 OK with paginated DLQ jobs including corrupted entries", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/email-queue/dlq?start=0&limit=20&order=desc`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get("content-type"), /application\/json/);
 
-    const data = await res.json();
-    assert.deepEqual(data, {
-      error: {
-        code: "QUEUE_NOT_FOUND",
-        message: "Queue 'unknown-queue' is not registered with the dashboard adapter",
-        details: null
-      }
+      const data = await res.json();
+      assert.deepEqual(data, {
+        queue: "email-queue",
+        total: 2,
+        start: 0,
+        limit: 20,
+        order: "desc",
+        jobs: mockDLQJobs
+      });
     });
-  });
 
-  it("should return 503 Service Unavailable when queue is closed", async () => {
-    const res = await fetch(`${serverUrl}/api/queues/closed-queue/metrics`);
-    assert.equal(res.status, 503);
+    it("should return 400 Bad Request on invalid order parameter", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/email-queue/dlq?order=alphabetical`);
+      assert.equal(res.status, 400);
 
-    const data = await res.json();
-    assert.deepEqual(data, {
-      error: {
-        code: "QUEUE_CLOSED",
-        message: "Queue is closed",
-        details: null
-      }
+      const data = await res.json();
+      assert.equal(data.error.code, "VALIDATION_ERROR");
+      assert.equal(data.error.message, 'order must be "asc" or "desc"');
+      assert.deepEqual(data.error.details, { parameter: "order", value: "alphabetical" });
     });
-  });
 
-  it("should fall through to next() for unmatched routes", async () => {
-    const res = await fetch(`${serverUrl}/unmatched/path`);
-    assert.equal(res.status, 404);
+    it("should return 400 Bad Request on negative start parameter", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/email-queue/dlq?start=-1`);
+      assert.equal(res.status, 400);
 
-    const data = await res.json();
-    assert.equal(data.message, "Handled by downstream next()");
+      const data = await res.json();
+      assert.equal(data.error.code, "VALIDATION_ERROR");
+      assert.equal(data.error.message, "start must be a non-negative integer");
+      assert.deepEqual(data.error.details, { parameter: "start", value: "-1" });
+    });
+
+    it("should return 400 Bad Request on non-integer limit parameter", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/email-queue/dlq?limit=abc`);
+      assert.equal(res.status, 400);
+
+      const data = await res.json();
+      assert.equal(data.error.code, "VALIDATION_ERROR");
+      assert.equal(data.error.message, "limit must be a non-negative integer");
+    });
+
+    it("should return 404 Not Found when querying DLQ for unregistered queue", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/billing-queue/dlq`);
+      assert.equal(res.status, 404);
+
+      const data = await res.json();
+      assert.equal(data.error.code, "QUEUE_NOT_FOUND");
+      assert.equal(data.error.message, "Queue 'billing-queue' is not registered with the dashboard adapter");
+    });
+
+    it("should return 503 Service Unavailable when querying DLQ for closed queue", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/closed-queue/dlq`);
+      assert.equal(res.status, 503);
+
+      const data = await res.json();
+      assert.deepEqual(data, {
+        error: {
+          code: "QUEUE_CLOSED",
+          message: "Queue is closed",
+          details: null
+        }
+      });
+    });
   });
 });
 
@@ -122,7 +217,8 @@ describe("Express Adapter with basePath option", () => {
   const mockQueue = {
     isClosed: false,
     isPaused: async () => false,
-    getMetrics: async () => ({ waiting: 1, active: 0, delayed: 0, dlq: 0 })
+    getMetrics: async () => ({ waiting: 1, active: 0, delayed: 0, dlq: 0 }),
+    getDLQ: async () => ({ total: 0, jobs: [] })
   };
 
   before(async () => {
@@ -153,12 +249,22 @@ describe("Express Adapter with basePath option", () => {
     }
   });
 
-  it("should respond when requested under basePath prefix", async () => {
+  it("should respond when requested under basePath prefix for metrics", async () => {
     const res = await fetch(`${serverUrl}/admin/queues/api/queues/notifications/metrics`);
     assert.equal(res.status, 200);
 
     const data = await res.json();
     assert.equal(data.queue, "notifications");
     assert.equal(data.metrics.waiting, 1);
+  });
+
+  it("should respond when requested under basePath prefix for DLQ", async () => {
+    const res = await fetch(`${serverUrl}/admin/queues/api/queues/notifications/dlq`);
+    assert.equal(res.status, 200);
+
+    const data = await res.json();
+    assert.equal(data.queue, "notifications");
+    assert.equal(data.total, 0);
+    assert.deepEqual(data.jobs, []);
   });
 });

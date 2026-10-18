@@ -7,10 +7,12 @@
 
 const { QueueRegistry, createQueueRegistry } = require("./registry");
 const { handleGetMetrics } = require("./handlers/metrics");
+const { handleGetDLQ } = require("./handlers/dlq");
 const {
   DashboardDispatcher,
   createDashboardDispatcher,
-  createErrorResponse
+  createErrorResponse,
+  parseDLQQueryParams
 } = require("./dispatcher");
 const { createExpressAdapter } = require("./adapters/express");
 const { fastifyDashboardPlugin } = require("./adapters/fastify");
@@ -22,9 +24,11 @@ module.exports = {
   QueueRegistry,
   createQueueRegistry,
   handleGetMetrics,
+  handleGetDLQ,
   DashboardDispatcher,
   createDashboardDispatcher,
   createExpressAdapter,
   fastifyDashboardPlugin,
-  createErrorResponse
+  createErrorResponse,
+  parseDLQQueryParams
 };

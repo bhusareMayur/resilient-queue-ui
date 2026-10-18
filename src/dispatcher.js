@@ -2,6 +2,7 @@
 
 const { QueueRegistry, createQueueRegistry } = require("./registry");
 const { handleGetMetrics } = require("./handlers/metrics");
+const { handleGetDLQ } = require("./handlers/dlq");
 
 /**
  * Creates the standard JSON error response envelope.
@@ -53,6 +54,119 @@ function sendJson(res, status, body) {
   if (typeof res.end === "function") {
     res.end(jsonStr);
   }
+}
+
+/**
+ * Validates and normalizes DLQ query parameters.
+ *
+ * @param {object} [query={}] Raw query object
+ * @returns {{ start: number, limit: number, order: "asc"|"desc" } | { error: object }}
+ */
+function parseDLQQueryParams(query = {}) {
+  let start = 0;
+  let limit = 50;
+  let order = "asc";
+
+  // Validate and parse 'start'
+  if (query.start !== undefined && query.start !== null && query.start !== "") {
+    const rawStart = query.start;
+    if (typeof rawStart === "number") {
+      if (!Number.isInteger(rawStart) || rawStart < 0) {
+        return {
+          error: createErrorResponse(
+            "VALIDATION_ERROR",
+            "start must be a non-negative integer",
+            { parameter: "start", value: rawStart }
+          )
+        };
+      }
+      start = rawStart;
+    } else if (typeof rawStart === "string") {
+      const trimmed = rawStart.trim();
+      if (!/^\d+$/.test(trimmed)) {
+        return {
+          error: createErrorResponse(
+            "VALIDATION_ERROR",
+            "start must be a non-negative integer",
+            { parameter: "start", value: rawStart }
+          )
+        };
+      }
+      start = parseInt(trimmed, 10);
+    } else {
+      return {
+        error: createErrorResponse(
+          "VALIDATION_ERROR",
+          "start must be a non-negative integer",
+          { parameter: "start", value: rawStart }
+        )
+      };
+    }
+  }
+
+  // Validate and parse 'limit'
+  if (query.limit !== undefined && query.limit !== null && query.limit !== "") {
+    const rawLimit = query.limit;
+    if (typeof rawLimit === "number") {
+      if (!Number.isInteger(rawLimit) || rawLimit < 0) {
+        return {
+          error: createErrorResponse(
+            "VALIDATION_ERROR",
+            "limit must be a non-negative integer",
+            { parameter: "limit", value: rawLimit }
+          )
+        };
+      }
+      limit = rawLimit;
+    } else if (typeof rawLimit === "string") {
+      const trimmed = rawLimit.trim();
+      if (!/^\d+$/.test(trimmed)) {
+        return {
+          error: createErrorResponse(
+            "VALIDATION_ERROR",
+            "limit must be a non-negative integer",
+            { parameter: "limit", value: rawLimit }
+          )
+        };
+      }
+      limit = parseInt(trimmed, 10);
+    } else {
+      return {
+        error: createErrorResponse(
+          "VALIDATION_ERROR",
+          "limit must be a non-negative integer",
+          { parameter: "limit", value: rawLimit }
+        )
+      };
+    }
+  }
+
+  // Validate and parse 'order'
+  if (query.order !== undefined && query.order !== null && query.order !== "") {
+    const rawOrder = query.order;
+    if (typeof rawOrder !== "string") {
+      return {
+        error: createErrorResponse(
+          "VALIDATION_ERROR",
+          'order must be "asc" or "desc"',
+          { parameter: "order", value: rawOrder }
+        )
+      };
+    }
+    const normalized = rawOrder.trim().toLowerCase();
+    if (normalized !== "asc" && normalized !== "desc") {
+      return {
+        error: createErrorResponse(
+          "VALIDATION_ERROR",
+          'order must be "asc" or "desc"',
+          { parameter: "order", value: rawOrder }
+        )
+      };
+    }
+    order = normalized;
+  }
+
+  return { start, limit, order };
 }
 
 class DashboardDispatcher {
@@ -164,6 +278,111 @@ class DashboardDispatcher {
   }
 
   /**
+   * Executes the GET /api/queues/:queueName/dlq route logic.
+   *
+   * @param {string} rawQueueName Queue identifier path parameter
+   * @param {object} [query={}] Query parameters (start, limit, order)
+   * @returns {Promise<{ status: number, body: object }>}
+   */
+  async executeDLQRoute(rawQueueName, query = {}) {
+    if (
+      rawQueueName === undefined ||
+      rawQueueName === null ||
+      typeof rawQueueName !== "string"
+    ) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "queueName must be a non-empty string"
+        )
+      };
+    }
+
+    let queueName;
+    try {
+      queueName = decodeURIComponent(rawQueueName);
+    } catch {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "Invalid URL-encoded queueName parameter"
+        )
+      };
+    }
+
+    const trimmedQueueName = queueName.trim();
+    if (trimmedQueueName.length === 0) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "queueName must be a non-empty string"
+        )
+      };
+    }
+
+    const queue = this.registry.get(trimmedQueueName);
+    if (!queue) {
+      return {
+        status: 404,
+        body: createErrorResponse(
+          "QUEUE_NOT_FOUND",
+          `Queue '${trimmedQueueName}' is not registered with the dashboard adapter`
+        )
+      };
+    }
+
+    const parsed = parseDLQQueryParams(query);
+    if (parsed.error) {
+      return {
+        status: 400,
+        body: parsed.error
+      };
+    }
+
+    const { start, limit, order } = parsed;
+
+    try {
+      const result = await handleGetDLQ(queue, { start, limit, order });
+
+      return {
+        status: 200,
+        body: {
+          queue: trimmedQueueName,
+          total: result.total,
+          start,
+          limit,
+          order,
+          jobs: result.jobs
+        }
+      };
+    } catch (err) {
+      if (
+        err &&
+        (err.code === "QUEUE_CLOSED" ||
+          err.statusCode === 503 ||
+          (typeof err.message === "string" &&
+            /queue is closed/i.test(err.message)))
+      ) {
+        return {
+          status: 503,
+          body: createErrorResponse("QUEUE_CLOSED", "Queue is closed")
+        };
+      }
+
+      return {
+        status: 500,
+        body: createErrorResponse(
+          "INTERNAL_ERROR",
+          err?.message || "Internal server error"
+        )
+      };
+    }
+  }
+
+  /**
    * Dispatches an incoming HTTP request (Express / Connect / native Node http).
    *
    * @param {object} req
@@ -189,8 +408,10 @@ class DashboardDispatcher {
       pathname = "/" + pathname;
     }
 
-    const match = pathname.match(/^\/api\/queues\/([^/]*)\/metrics\/?$/);
-    if (!match) {
+    const metricsMatch = pathname.match(/^\/api\/queues\/([^/]*)\/metrics\/?$/);
+    const dlqMatch = pathname.match(/^\/api\/queues\/([^/]*)\/dlq\/?$/);
+
+    if (!metricsMatch && !dlqMatch) {
       if (typeof next === "function") {
         return next();
       }
@@ -212,10 +433,27 @@ class DashboardDispatcher {
       );
     }
 
-    const rawQueueName = match[1];
     try {
-      const result = await this.executeMetricsRoute(rawQueueName);
-      sendJson(res, result.status, result.body);
+      if (metricsMatch) {
+        const rawQueueName = metricsMatch[1];
+        const result = await this.executeMetricsRoute(rawQueueName);
+        return sendJson(res, result.status, result.body);
+      }
+
+      if (dlqMatch) {
+        const rawQueueName = dlqMatch[1];
+        let query = req.query;
+        if (!query && req.url && req.url.includes("?")) {
+          try {
+            const parsedUrl = new URL(req.url, "http://localhost");
+            query = Object.fromEntries(parsedUrl.searchParams.entries());
+          } catch {
+            query = {};
+          }
+        }
+        const result = await this.executeDLQRoute(rawQueueName, query || {});
+        return sendJson(res, result.status, result.body);
+      }
     } catch (err) {
       sendJson(
         res,
@@ -237,5 +475,6 @@ module.exports = {
   DashboardDispatcher,
   createDashboardDispatcher,
   createErrorResponse,
+  parseDLQQueryParams,
   sendJson
 };
