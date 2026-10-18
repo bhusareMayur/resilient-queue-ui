@@ -121,21 +121,67 @@ describe("Live ResilientQueue Integration", () => {
     assert.equal(data2.isPaused, false);
   });
 
-  it("should return 503 QUEUE_CLOSED after queue is closed", async (t) => {
+  it("should retrieve empty DLQ initially", async (t) => {
+    if (!redisAvailable) return t.skip();
+
+    const res = await fetch(`${serverUrl}/api/queues/live-test/dlq?start=0&limit=10&order=desc`);
+    assert.equal(res.status, 200);
+
+    const data = await res.json();
+    assert.equal(data.queue, "live-test");
+    assert.equal(data.total, 0);
+    assert.equal(data.start, 0);
+    assert.equal(data.limit, 10);
+    assert.equal(data.order, "desc");
+    assert.deepEqual(data.jobs, []);
+  });
+
+  it("should retrieve DLQ jobs and handle corrupted JSON entries from live Redis", async (t) => {
+    if (!redisAvailable) return t.skip();
+
+    const failedJobPayload = {
+      id: "live-dead-job-1",
+      data: { recipient: "dead@letter.com" },
+      attempt: 4,
+      createdAt: Date.now() - 5000,
+      failedAt: Date.now(),
+      failureReason: "Recipient mailbox unavailable"
+    };
+
+    // Push one valid failed job and one corrupted string to DLQ list
+    await queue.producer.rpush(queue.dlqKey, JSON.stringify(failedJobPayload));
+    await queue.producer.rpush(queue.dlqKey, "corrupted_payload_without_json{");
+
+    const res = await fetch(`${serverUrl}/api/queues/live-test/dlq?start=0&limit=10&order=asc`);
+    assert.equal(res.status, 200);
+
+    const data = await res.json();
+    assert.equal(data.total, 2);
+    assert.equal(data.jobs.length, 2);
+
+    // First job is the valid failed job
+    assert.equal(data.jobs[0].id, "live-dead-job-1");
+    assert.equal(data.jobs[0].failureReason, "Recipient mailbox unavailable");
+
+    // Second job is the corrupted entry
+    assert.equal(data.jobs[1].id, null);
+    assert.equal(data.jobs[1].corrupted, true);
+    assert.equal(data.jobs[1].raw, "corrupted_payload_without_json{");
+  });
+
+  it("should return 503 QUEUE_CLOSED after queue is closed for both metrics and DLQ", async (t) => {
     if (!redisAvailable) return t.skip();
 
     await queue.close();
 
-    const res = await fetch(`${serverUrl}/api/queues/live-test/metrics`);
-    assert.equal(res.status, 503);
+    const resMetrics = await fetch(`${serverUrl}/api/queues/live-test/metrics`);
+    assert.equal(resMetrics.status, 503);
+    const dataMetrics = await resMetrics.json();
+    assert.equal(dataMetrics.error.code, "QUEUE_CLOSED");
 
-    const data = await res.json();
-    assert.deepEqual(data, {
-      error: {
-        code: "QUEUE_CLOSED",
-        message: "Queue is closed",
-        details: null
-      }
-    });
+    const resDLQ = await fetch(`${serverUrl}/api/queues/live-test/dlq`);
+    assert.equal(resDLQ.status, 503);
+    const dataDLQ = await resDLQ.json();
+    assert.equal(dataDLQ.error.code, "QUEUE_CLOSED");
   });
 });

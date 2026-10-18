@@ -31,6 +31,17 @@ function fastifyDashboardPlugin(fastify, options = {}, done) {
     }
   );
 
+  fastify.get(
+    "/api/queues/:queueName/dlq",
+    routeOptions,
+    async (request, reply) => {
+      const rawQueueName = request?.params?.queueName;
+      const query = request?.query || {};
+      const result = await dispatcher.executeDLQRoute(rawQueueName, query);
+      reply.code(result.status).send(result.body);
+    }
+  );
+
   if (typeof done === "function") {
     done();
     return;
