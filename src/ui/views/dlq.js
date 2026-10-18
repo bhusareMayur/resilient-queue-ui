@@ -114,7 +114,7 @@ function renderDLQError(error, queueName) {
   `;
 }
 
-function renderJobDetail(job, isCorrupted) {
+function renderJobDetail(job, isCorrupted, queueName = null) {
   if (isCorrupted) {
     return `
       <div class="job-detail-box" role="region" aria-label="Corrupted Job Details">
@@ -188,12 +188,30 @@ function renderJobDetail(job, isCorrupted) {
         <pre class="job-payload-box"><code>${escapeHtml(dataFormatted)}</code></pre>
       </div>
 
-      <div class="callout callout-info" style="margin-top: 0.75rem; margin-bottom: 0;">
-        <div class="callout-body" style="font-size: 11px;">
-          <strong>Compatibility Note:</strong> All diagnostics above are retrieved directly from the Dead Letter Queue record.
-          Direct live job lookup via <code>getJob()</code> is unavailable in published <code>@mayurbhusare/resilient-queue@2.0.2</code>.
+      ${
+        !isCorrupted && job?.id && queueName
+          ? `
+        <div style="margin-top: 0.75rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+          <span class="text-muted" style="font-size: 11px;">Record diagnostics loaded from Dead Letter Queue payload.</span>
+          <a
+            href="#/job?queue=${encodeURIComponent(queueName)}&jobId=${encodeURIComponent(job.id)}"
+            class="btn btn-secondary btn-sm inspect-in-job-view-btn"
+            data-queue="${escapeHtml(queueName)}"
+            data-job-id="${escapeHtml(job.id)}"
+            style="font-size: 12px;"
+          >
+            Inspect in Job Inspector &rarr;
+          </a>
         </div>
-      </div>
+      `
+          : `
+        <div class="callout callout-info" style="margin-top: 0.75rem; margin-bottom: 0;">
+          <div class="callout-body" style="font-size: 11px;">
+            All diagnostics above are retrieved directly from the Dead Letter Queue record.
+          </div>
+        </div>
+      `
+      }
     </div>
   `;
 }
@@ -249,7 +267,7 @@ function renderDLQTable(state) {
           ? `
         <tr class="job-expanded-row">
           <td colspan="5" style="padding: 0;">
-            ${renderJobDetail(job, isCorrupted)}
+            ${renderJobDetail(job, isCorrupted, state.selectedQueue)}
           </td>
         </tr>
       `

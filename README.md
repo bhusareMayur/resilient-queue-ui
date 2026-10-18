@@ -97,16 +97,16 @@ fastify.listen({ port: 3000 });
 
 ---
 
-## Dashboard UI & Frontend Architecture (Milestone 5)
+## Dashboard UI & Frontend Architecture
 
 The package includes a built-in, lightweight administration dashboard served directly by the Express and Fastify adapters:
 
 - **Clean, Responsive Layout**: Includes a sidebar navigation area and responsive drawer for mobile devices.
 - **Views**:
   - **Queue Overview**: Consumes `GET /api/queues` with real-time aggregate telemetry cards, paused/active badges, and queue metrics table.
-  - **Dead Letter Queue (DLQ)**: Foundation view ready for Milestone 6 DLQ explorer.
-  - **Job Diagnostics**: Foundation placeholder for inspecting job states, progress, timestamps, and payloads.
-- **Robust UI States**: Handles loading spinners, empty states (with configuration snippet), and API error states with an interactive "Retry" action.
+  - **Dead Letter Queue (DLQ) Explorer**: Read-only browser for dead-letter jobs with pagination, sort order toggle, corrupted JSON resilience, failure diagnostics, and payload inspection.
+  - **Job Inspector**: Comprehensive job inspection view supporting lookups by queue and job ID (`GET /api/queues/:queueName/jobs/:jobId`), displaying execution state badges, progress bar, lifecycle timestamps, failure diagnostics, input data payloads, and return values.
+- **Robust UI States**: Handles loading spinners, empty states (with configuration snippet), 404 not found states, and API error states with an interactive "Retry" action.
 - **Zero External Frontend Dependencies**: Pure semantic HTML5, modern CSS3 with CSS variables, and modular vanilla JavaScript.
 
 ### Reusable Frontend API Client
@@ -129,14 +129,14 @@ const metrics = await client.getQueueMetrics("emails");
 // Fetch DLQ entries with pagination
 const dlq = await client.getQueueDLQ("emails", { start: 0, limit: 25, order: "desc" });
 
-// Fetch individual job
-const job = await client.getJob("emails", "job-123");
+// Fetch individual job descriptor
+const { job } = await client.getJob("emails", "job-123");
 ```
 
 ### Core Compatibility Requirement
 
 > [!NOTE]
-> The published `@mayurbhusare/resilient-queue@2.0.2` release does not expose the `getJob()` public method. Direct individual job inspection is unavailable when paired with `v2.0.2` and will be activated once a compatible core release is installed. The UI displays an appropriate unavailable placeholder notice.
+> The published `@mayurbhusare/resilient-queue@2.0.2` release does not expose the public `queue.getJob(jobId)` method. When paired with published `@mayurbhusare/resilient-queue@2.0.2`, the dashboard adapter returns `501 NOT_SUPPORTED` and the UI gracefully renders a clear compatibility disclosure notice without crashing. Full live job inspection automatically activates once an updated core release containing `getJob()` is installed.
 
 ---
 

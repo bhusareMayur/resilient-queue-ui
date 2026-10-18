@@ -50,6 +50,13 @@ async function handleGetJob(queue, jobId) {
     throw error;
   }
 
+  if (typeof queue.getJob !== "function") {
+    const notSupportedError = new Error("Queue instance does not implement getJob");
+    notSupportedError.code = "NOT_SUPPORTED";
+    notSupportedError.statusCode = 501;
+    throw notSupportedError;
+  }
+
   try {
     const job = await queue.getJob(jobId.trim());
     if (!job) {

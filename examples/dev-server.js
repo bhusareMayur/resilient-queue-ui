@@ -41,6 +41,49 @@ const adapter = createExpressAdapter({
         const sorted = order === "desc" ? [...allJobs].reverse() : allJobs;
         const paged = sorted.slice(start, start + limit);
         return { total: allJobs.length, jobs: paged };
+      },
+      getJob: async (jobId) => {
+        const mockDatabase = {
+          "job-email-8492": {
+            id: "job-email-8492",
+            state: "failed",
+            progress: 100,
+            attempt: 3,
+            stalledCount: 1,
+            createdAt: Date.now() - 3600000,
+            startedAt: Date.now() - 3500000,
+            failedAt: Date.now() - 1800000,
+            retriedAt: Date.now() - 2000000,
+            failureReason: "SMTPConnectionError: Connection to smtp.sendgrid.net timed out after 30000ms",
+            idempotencyKey: "idem-email-8492",
+            delay: 0,
+            ttlSeconds: 86400,
+            removeOnComplete: true,
+            removeOnFail: false,
+            data: { to: "sarah.connor@example.com", template: "welcome_onboarding", campaignId: "camp_892" },
+            returnValue: null
+          },
+          "job-email-9001": {
+            id: "job-email-9001",
+            state: "active",
+            progress: 68,
+            attempt: 1,
+            stalledCount: 0,
+            createdAt: Date.now() - 120000,
+            startedAt: Date.now() - 60000,
+            failedAt: null,
+            retriedAt: null,
+            failureReason: null,
+            idempotencyKey: null,
+            delay: 0,
+            ttlSeconds: null,
+            removeOnComplete: true,
+            removeOnFail: false,
+            data: { to: "newsletter-subscribers@example.com", batchId: "b_4021", count: 1250 },
+            returnValue: null
+          }
+        };
+        return mockDatabase[jobId] || null;
       }
     },
     "video-transcoding": {
@@ -73,11 +116,37 @@ const adapter = createExpressAdapter({
         const paged = sorted.slice(start, start + limit);
         return { total: allJobs.length, jobs: paged };
       }
+      // Note: video-transcoding intentionally omits getJob() to test the 501 NOT_SUPPORTED compatibility warning!
     },
     "order-processing": {
       isPaused: async () => false,
       getMetrics: async () => ({ waiting: 35, active: 4, delayed: 2, dlq: 0 }),
-      getDLQ: async () => ({ total: 0, jobs: [] })
+      getDLQ: async () => ({ total: 0, jobs: [] }),
+      getJob: async (jobId) => {
+        if (jobId === "ord-checkout-771") {
+          return {
+            id: "ord-checkout-771",
+            state: "completed",
+            progress: 100,
+            attempt: 1,
+            stalledCount: 0,
+            createdAt: Date.now() - 900000,
+            startedAt: Date.now() - 850000,
+            completedAt: Date.now() - 800000,
+            failedAt: null,
+            retriedAt: null,
+            failureReason: null,
+            idempotencyKey: "checkout-token-xyz99",
+            delay: 0,
+            ttlSeconds: 604800,
+            removeOnComplete: false,
+            removeOnFail: false,
+            data: { customerId: "cust_99182", cartItems: 3, totalAmount: 49.99 },
+            returnValue: { status: "PAID", transactionId: "ch_3NabcXYZ123", receiptSent: true }
+          };
+        }
+        return null;
+      }
     }
   }
 });

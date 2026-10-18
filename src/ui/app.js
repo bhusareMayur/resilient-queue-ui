@@ -62,11 +62,21 @@
           loading: false,
           error: null,
           expandedJobIndex: null
+        },
+
+        // Job Inspection State
+        job: {
+          selectedQueue: null,
+          jobId: "",
+          job: null,
+          loading: false,
+          error: null
         }
       };
 
       this._queuesRequestId = 0;
       this._dlqRequestId = 0;
+      this._jobRequestId = 0;
 
       this.viewTitles = {
         overview: "Queue Overview",
@@ -129,6 +139,11 @@
             this.fetchDLQ();
           }
         }
+
+        // If on Job view without selected queue, pick a candidate
+        if (this.state.activeView === "job" && !this.state.job.selectedQueue && this.state.queues.length > 0) {
+          this.state.job.selectedQueue = this.state.queues[0].name;
+        }
       } catch (err) {
         if (requestId !== this._queuesRequestId) {
           return;
@@ -188,6 +203,70 @@
     }
 
     /**
+     * Fetches job descriptor by queue and jobId from GET /api/queues/:queueName/jobs/:jobId.
+     *
+     * @param {string} [queueName]
+     * @param {string} [jobId]
+     */
+    async fetchJob(queueName, jobId) {
+      if (!this.apiClient) return;
+
+      const trimmedQueue = (typeof queueName === "string" ? queueName : (this.state.job.selectedQueue || "")).trim();
+      const trimmedJobId = (typeof jobId === "string" ? jobId : (this.state.job.jobId || "")).trim();
+
+      if (!trimmedQueue || !trimmedJobId) {
+        this.state.job.selectedQueue = trimmedQueue || null;
+        this.state.job.jobId = trimmedJobId;
+        this.state.job.job = null;
+        this.state.job.error = {
+          code: "VALIDATION_ERROR",
+          message: !trimmedQueue ? "Please select a registered queue." : "jobId must be a non-empty string.",
+          status: 400
+        };
+        this.renderView();
+        return;
+      }
+
+      this.state.job.selectedQueue = trimmedQueue;
+      this.state.job.jobId = trimmedJobId;
+      this.state.job.loading = true;
+      this.state.job.error = null;
+      this.renderView();
+
+      const requestId = ++this._jobRequestId;
+
+      try {
+        const response = await this.apiClient.getJob(trimmedQueue, trimmedJobId);
+
+        if (
+          requestId !== this._jobRequestId ||
+          this.state.job.selectedQueue !== trimmedQueue ||
+          this.state.job.jobId !== trimmedJobId
+        ) {
+          return; // Discard stale response
+        }
+
+        this.state.job.loading = false;
+        this.state.job.job = response?.job || null;
+        this.state.job.error = null;
+      } catch (err) {
+        if (
+          requestId !== this._jobRequestId ||
+          this.state.job.selectedQueue !== trimmedQueue ||
+          this.state.job.jobId !== trimmedJobId
+        ) {
+          return; // Discard stale error
+        }
+
+        this.state.job.loading = false;
+        this.state.job.job = null;
+        this.state.job.error = err;
+      }
+
+      this.renderView();
+    }
+
+    /**
      * Updates top-bar status dot and text.
      */
     updateStatusIndicator(state, text) {
@@ -237,10 +316,28 @@
         }
       }
 
+      if (viewName === "job") {
+        if (params.queue) {
+          this.state.job.selectedQueue = params.queue;
+        } else if (!this.state.job.selectedQueue && this.state.queues.length > 0) {
+          this.state.job.selectedQueue = this.state.queues[0].name;
+        }
+
+        if (params.jobId) {
+          this.state.job.jobId = params.jobId;
+          this.fetchJob(this.state.job.selectedQueue, params.jobId);
+        }
+      }
+
       if (typeof window !== "undefined" && window.location) {
         let hash = `#/${viewName}`;
         if (viewName === "dlq" && this.state.dlq.selectedQueue) {
           hash += `?queue=${encodeURIComponent(this.state.dlq.selectedQueue)}`;
+        } else if (viewName === "job" && this.state.job.selectedQueue) {
+          hash += `?queue=${encodeURIComponent(this.state.job.selectedQueue)}`;
+          if (this.state.job.jobId) {
+            hash += `&jobId=${encodeURIComponent(this.state.job.jobId)}`;
+          }
         }
         window.location.hash = hash;
       }
@@ -301,7 +398,7 @@
       } else if (this.state.activeView === "dlq") {
         html = DLQView.render(this.state.dlq, this.state.queues);
       } else if (this.state.activeView === "job") {
-        html = JobView.render();
+        html = JobView.render(this.state.job, this.state.queues);
       }
 
       container.innerHTML = html;
@@ -440,6 +537,67 @@
           }
         });
       });
+
+      // Job Inspector Search Form
+      const jobSearchForm = document.getElementById("job-search-form");
+      if (jobSearchForm) {
+        jobSearchForm.addEventListener("submit", (e) => {
+          e.preventDefault();
+          const queueSelect = document.getElementById("job-queue-select");
+          const jobIdInput = document.getElementById("job-id-input");
+          const queueName = queueSelect ? queueSelect.value.trim() : (this.state.job.selectedQueue || "");
+          const jobId = jobIdInput ? jobIdInput.value.trim() : "";
+          if (typeof window !== "undefined" && window.location && queueName && jobId) {
+            window.location.hash = `#/job?queue=${encodeURIComponent(queueName)}&jobId=${encodeURIComponent(jobId)}`;
+          }
+          this.fetchJob(queueName, jobId);
+        });
+      }
+
+      // Job Inspector Queue Select change
+      const jobQueueSelect = document.getElementById("job-queue-select");
+      if (jobQueueSelect) {
+        jobQueueSelect.addEventListener("change", (e) => {
+          this.state.job.selectedQueue = e.target.value.trim() || null;
+          this.state.job.job = null;
+          this.state.job.error = null;
+        });
+      }
+
+      // Job Inspector Retry Button
+      const jobRetryBtn = document.getElementById("job-retry-btn");
+      if (jobRetryBtn) {
+        jobRetryBtn.addEventListener("click", () => {
+          this.fetchJob(this.state.job.selectedQueue, this.state.job.jobId);
+        });
+      }
+
+      // Job Inspector Clear Search Button
+      const jobClearBtn = document.getElementById("job-clear-btn");
+      if (jobClearBtn) {
+        jobClearBtn.addEventListener("click", () => {
+          this.state.job.jobId = "";
+          this.state.job.job = null;
+          this.state.job.error = null;
+          if (typeof window !== "undefined" && window.location) {
+            window.location.hash = `#/job?queue=${encodeURIComponent(this.state.job.selectedQueue || "")}`;
+          }
+          this.renderView();
+        });
+      }
+
+      // Cross-link from DLQ Explorer to Job Inspector
+      const inspectInJobBtns = document.querySelectorAll(".inspect-in-job-view-btn");
+      inspectInJobBtns.forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          const qName = btn.getAttribute("data-queue");
+          const jId = btn.getAttribute("data-job-id");
+          if (qName && jId) {
+            this.navigate("job", { queue: qName, jobId: jId });
+          }
+        });
+      });
     }
 
     /**
@@ -520,13 +678,15 @@
           this.fetchQueues();
           if (this.state.activeView === "dlq" && this.state.dlq.selectedQueue) {
             this.fetchDLQ();
+          } else if (this.state.activeView === "job" && this.state.job.selectedQueue && this.state.job.jobId) {
+            this.fetchJob(this.state.job.selectedQueue, this.state.job.jobId);
           }
         });
       }
     }
 
     /**
-     * Parses and handles browser URL hash navigation (e.g. #/dlq?queue=emails or #/job).
+     * Parses and handles browser URL hash navigation (e.g. #/dlq?queue=emails or #/job?queue=emails&jobId=...).
      */
     handleHashChange() {
       if (typeof window === "undefined" || !window.location.hash) return;
@@ -534,30 +694,41 @@
       const raw = window.location.hash.replace(/^#\/?/, "");
       let view = raw;
       let queueParam = null;
+      let jobIdParam = null;
 
       if (raw.startsWith("dlq/")) {
         view = "dlq";
         queueParam = decodeURIComponent(raw.slice(4));
+      } else if (raw.startsWith("job/")) {
+        view = "job";
+        const parts = raw.slice(4).split("/");
+        queueParam = decodeURIComponent(parts[0] || "");
+        jobIdParam = decodeURIComponent(parts.slice(1).join("/") || "");
       } else if (raw.includes("?")) {
         const [viewPart, queryPart] = raw.split("?");
         view = viewPart;
         try {
           const params = new URLSearchParams(queryPart);
           queueParam = params.get("queue");
+          jobIdParam = params.get("jobId");
         } catch {
           // ignore malformed query
         }
       }
 
       if (view && this.viewTitles[view]) {
-        // Avoid redundant navigations if view and queue already match current state
+        // Avoid redundant navigations if view and queue/jobId already match current state
         if (
           this.state.activeView === view &&
-          (view !== "dlq" || !queueParam || this.state.dlq.selectedQueue === queueParam)
+          (view === "overview" ||
+            (view === "dlq" && (!queueParam || this.state.dlq.selectedQueue === queueParam)) ||
+            (view === "job" &&
+              (!queueParam || this.state.job.selectedQueue === queueParam) &&
+              (!jobIdParam || this.state.job.jobId === jobIdParam)))
         ) {
           return;
         }
-        this.navigate(view, { queue: queueParam });
+        this.navigate(view, { queue: queueParam, jobId: jobIdParam });
       }
     }
 
