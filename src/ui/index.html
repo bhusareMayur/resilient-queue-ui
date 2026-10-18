@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Administration dashboard for @mayurbhusare/resilient-queue" />
+  <title>ResilientQueue Dashboard</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="mobile-backdrop" id="mobile-backdrop" aria-hidden="true"></div>
+
+  <div class="app-container">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="sidebar" aria-label="Dashboard Navigation">
+      <div class="sidebar-header">
+        <a href="#/overview" class="brand" aria-label="ResilientQueue Home">
+          <div class="brand-icon" aria-hidden="true">RQ</div>
+          <span class="brand-title">ResilientQueue</span>
+          <span class="brand-tag">UI</span>
+        </a>
+      </div>
+
+      <nav class="sidebar-nav" aria-label="Main Navigation">
+        <button
+          type="button"
+          class="nav-link active"
+          data-view="overview"
+          aria-current="page"
+          aria-label="Navigate to Queue Overview"
+        >
+          <span aria-hidden="true">📊</span>
+          <span>Queue Overview</span>
+        </button>
+
+        <button
+          type="button"
+          class="nav-link"
+          data-view="dlq"
+          aria-label="Navigate to Dead Letter Queue"
+        >
+          <span aria-hidden="true">📥</span>
+          <span>Dead Letter Queue</span>
+          <span class="nav-badge badge-muted">DLQ</span>
+        </button>
+
+        <button
+          type="button"
+          class="nav-link"
+          data-view="job"
+          aria-label="Navigate to Job Inspection"
+        >
+          <span aria-hidden="true">🔍</span>
+          <span>Job Inspection</span>
+          <span class="nav-badge badge-amber" title="getJob() unavailable in core v2.0.2">Preview</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div>@mayurbhusare/resilient-queue-ui</div>
+        <div style="margin-top: 0.25rem;">
+          <a href="https://github.com/resilient-queue/resilient-queue-ui#readme" target="_blank" rel="noopener noreferrer">
+            Documentation &rarr;
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="main-wrapper">
+      <header class="top-bar">
+        <div class="top-bar-left">
+          <button
+            type="button"
+            class="mobile-toggle"
+            id="mobile-toggle-btn"
+            aria-label="Toggle navigation menu"
+            aria-expanded="false"
+            aria-controls="sidebar"
+          >
+            ☰
+          </button>
+          <h1 class="view-title" id="view-title">Queue Overview</h1>
+        </div>
+
+        <div class="top-bar-actions">
+          <div class="status-indicator">
+            <span class="status-dot loading" id="status-dot" aria-hidden="true"></span>
+            <span id="status-text">Connecting...</span>
+          </div>
+
+          <button
+            type="button"
+            class="btn btn-secondary btn-sm"
+            id="refresh-btn"
+            aria-label="Refresh Queue Telemetry"
+          >
+            <span>↻</span>
+            <span>Refresh</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="content-area" id="content-container" role="main" aria-live="polite">
+        <!-- Rendered dynamically by app.js -->
+        <div class="state-container loading-state" role="status">
+          <div class="spinner" aria-hidden="true"></div>
+          <h3 class="state-title">Initializing Dashboard...</h3>
+          <p class="state-description">Establishing connection to the adapter API.</p>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="./api-client.js"></script>
+  <script src="./views/overview.js"></script>
+  <script src="./views/dlq.js"></script>
+  <script src="./views/job.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

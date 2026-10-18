@@ -18,6 +18,7 @@ const {
 } = require("./dispatcher");
 const { createExpressAdapter } = require("./adapters/express");
 const { fastifyDashboardPlugin } = require("./adapters/fastify");
+const { ApiClient, ApiError } = require("./ui/api-client");
 
 const VERSION = "0.1.0";
 
@@ -35,5 +36,7 @@ module.exports = {
   createExpressAdapter,
   fastifyDashboardPlugin,
   createErrorResponse,
-  parseDLQQueryParams
+  parseDLQQueryParams,
+  ApiClient,
+  ApiError
 };

@@ -5,6 +5,8 @@
   "main": "src/index.js",
   "exports": {
     ".": "./src/index.js",
+    "./api-client": "./src/ui/api-client.js",
+    "./ui/*": "./src/ui/*",
     "./package.json": "./package.json"
   },
   "engines": {
@@ -38,7 +40,11 @@
     "src"
   ],
   "scripts": {
-    "test": "node --test"
+    "dev": "node examples/dev-server.js",
+    "test": "node --test",
+    "test:frontend": "node --test tests/unit/api-client.test.js tests/unit/ui-components.test.js",
+    "test:unit": "node --test tests/unit/*.test.js",
+    "test:integration": "node --test tests/integration/*.test.js"
   },
   "peerDependencies": {
     "@mayurbhusare/resilient-queue": "^2.0.0"

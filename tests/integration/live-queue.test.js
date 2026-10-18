@@ -35,7 +35,9 @@ describe("Live ResilientQueue Integration", () => {
   before(async (t) => {
     redisAvailable = await checkRedisAvailable();
     if (!redisAvailable) {
-      t.skip("Redis server is not reachable on 127.0.0.1:6379; skipping live integration tests");
+      if (typeof t?.skip === "function") {
+        t.skip("Redis server is not reachable on 127.0.0.1:6379; skipping live integration tests");
+      }
       return;
     }
 

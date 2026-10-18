@@ -58,6 +58,38 @@ function fastifyDashboardPlugin(fastify, options = {}, done) {
     }
   );
 
+  const { resolveUiAssetPath, sendStaticFile } = require("../dispatcher");
+  const uiRoutes = [
+    "/",
+    "/index.html",
+    "/styles.css",
+    "/api-client.js",
+    "/app.js",
+    "/views/overview.js",
+    "/views/dlq.js",
+    "/views/job.js",
+    "/ui",
+    "/ui/",
+    "/ui/index.html",
+    "/ui/styles.css",
+    "/ui/api-client.js",
+    "/ui/app.js",
+    "/ui/views/overview.js",
+    "/ui/views/dlq.js",
+    "/ui/views/job.js"
+  ];
+
+  for (const route of uiRoutes) {
+    fastify.get(route, routeOptions, async (request, reply) => {
+      const asset = resolveUiAssetPath(route);
+      if (asset) {
+        sendStaticFile(reply, asset.fullPath, asset.contentType);
+      } else {
+        reply.code(404).send({ error: { code: "ROUTE_NOT_FOUND", message: "Route not found" } });
+      }
+    });
+  }
+
   if (typeof done === "function") {
     done();
     return;

@@ -380,4 +380,44 @@ describe("Fastify Dashboard Plugin Integration", () => {
     assert.equal(res.statusCode, 503);
     assert.equal(res.body.error.code, "QUEUE_CLOSED");
   });
+
+  it("should serve index.html on GET / and /index.html in Fastify", async () => {
+    const fastify = new MockFastify();
+
+    await new Promise((resolve) => {
+      fastifyDashboardPlugin(
+        fastify,
+        {
+          queues: { orders: mockQueue }
+        },
+        resolve
+      );
+    });
+
+    const res = await fastify.inject("/");
+    assert.equal(res.statusCode, 200);
+    assert.match(res.body.toString(), /ResilientQueue Dashboard/);
+
+    const resIndex = await fastify.inject("/index.html");
+    assert.equal(resIndex.statusCode, 200);
+    assert.match(resIndex.body.toString(), /ResilientQueue Dashboard/);
+  });
+
+  it("should serve styles.css on GET /styles.css in Fastify", async () => {
+    const fastify = new MockFastify();
+
+    await new Promise((resolve) => {
+      fastifyDashboardPlugin(
+        fastify,
+        {
+          queues: { orders: mockQueue }
+        },
+        resolve
+      );
+    });
+
+    const res = await fastify.inject("/styles.css");
+    assert.equal(res.statusCode, 200);
+    assert.match(res.body.toString(), /--sidebar-width/);
+  });
 });
