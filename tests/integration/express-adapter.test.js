@@ -39,14 +39,31 @@ describe("Express Adapter Integration", () => {
     getDLQ: async (opts) => ({
       total: 2,
       jobs: mockDLQJobs
-    })
+    }),
+    getJob: async (jobId) => {
+      if (jobId === "active-job-1") {
+        return {
+          id: "active-job-1",
+          data: { recipient: "user@example.com" },
+          state: "active",
+          progress: 45,
+          attempt: 1,
+          stalledCount: 0,
+          createdAt: 1776500000000,
+          startedAt: 1776500001000,
+          updateProgress: async () => {}
+        };
+      }
+      return null;
+    }
   };
 
   const mockClosedQueue = {
     isClosed: true,
     isPaused: async () => false,
     getMetrics: async () => ({}),
-    getDLQ: async () => ({ total: 0, jobs: [] })
+    getDLQ: async () => ({ total: 0, jobs: [] }),
+    getJob: async () => null
   };
 
   before(async () => {
@@ -208,6 +225,59 @@ describe("Express Adapter Integration", () => {
       });
     });
   });
+
+  describe("GET /api/queues/:queueName/jobs/:jobId", () => {
+    it("should return 200 OK with job payload and omit updateProgress", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/email-queue/jobs/active-job-1`);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get("content-type"), /application\/json/);
+
+      const data = await res.json();
+      assert.equal(data.queue, "email-queue");
+      assert.equal(data.job.id, "active-job-1");
+      assert.equal(data.job.state, "active");
+      assert.equal(data.job.progress, 45);
+      assert.deepEqual(data.job.data, { recipient: "user@example.com" });
+      assert.equal("updateProgress" in data.job, false);
+    });
+
+    it("should return 404 Not Found for non-existent job ID", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/email-queue/jobs/missing-job-999`);
+      assert.equal(res.status, 404);
+
+      const data = await res.json();
+      assert.deepEqual(data, {
+        error: {
+          code: "JOB_NOT_FOUND",
+          message: "Job 'missing-job-999' not found or expired under retention policy",
+          details: null
+        }
+      });
+    });
+
+    it("should return 404 Not Found for unregistered queue", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/unknown-queue/jobs/active-job-1`);
+      assert.equal(res.status, 404);
+
+      const data = await res.json();
+      assert.equal(data.error.code, "QUEUE_NOT_FOUND");
+      assert.equal(data.error.message, "Queue 'unknown-queue' is not registered with the dashboard adapter");
+    });
+
+    it("should return 503 Service Unavailable when queue is closed", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/closed-queue/jobs/active-job-1`);
+      assert.equal(res.status, 503);
+
+      const data = await res.json();
+      assert.deepEqual(data, {
+        error: {
+          code: "QUEUE_CLOSED",
+          message: "Queue is closed",
+          details: null
+        }
+      });
+    });
+  });
 });
 
 describe("Express Adapter with basePath option", () => {
@@ -218,7 +288,13 @@ describe("Express Adapter with basePath option", () => {
     isClosed: false,
     isPaused: async () => false,
     getMetrics: async () => ({ waiting: 1, active: 0, delayed: 0, dlq: 0 }),
-    getDLQ: async () => ({ total: 0, jobs: [] })
+    getDLQ: async () => ({ total: 0, jobs: [] }),
+    getJob: async (jobId) => {
+      if (jobId === "base-job-1") {
+        return { id: "base-job-1", state: "completed", data: { done: true } };
+      }
+      return null;
+    }
   };
 
   before(async () => {
@@ -266,5 +342,15 @@ describe("Express Adapter with basePath option", () => {
     assert.equal(data.queue, "notifications");
     assert.equal(data.total, 0);
     assert.deepEqual(data.jobs, []);
+  });
+
+  it("should respond when requested under basePath prefix for Job inspection", async () => {
+    const res = await fetch(`${serverUrl}/admin/queues/api/queues/notifications/jobs/base-job-1`);
+    assert.equal(res.status, 200);
+
+    const data = await res.json();
+    assert.equal(data.queue, "notifications");
+    assert.equal(data.job.id, "base-job-1");
+    assert.equal(data.job.state, "completed");
   });
 });

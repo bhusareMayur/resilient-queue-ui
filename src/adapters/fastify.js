@@ -42,6 +42,17 @@ function fastifyDashboardPlugin(fastify, options = {}, done) {
     }
   );
 
+  fastify.get(
+    "/api/queues/:queueName/jobs/:jobId",
+    routeOptions,
+    async (request, reply) => {
+      const rawQueueName = request?.params?.queueName;
+      const rawJobId = request?.params?.jobId;
+      const result = await dispatcher.executeJobRoute(rawQueueName, rawJobId);
+      reply.code(result.status).send(result.body);
+    }
+  );
+
   if (typeof done === "function") {
     done();
     return;
