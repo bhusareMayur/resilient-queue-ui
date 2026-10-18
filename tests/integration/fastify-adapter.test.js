@@ -326,4 +326,58 @@ describe("Fastify Dashboard Plugin Integration", () => {
     assert.equal(res.statusCode, 503);
     assert.equal(res.body.error.code, "QUEUE_CLOSED");
   });
+
+  it("should register route and execute handler returning 200 OK for GET /api/queues", async () => {
+    const fastify = new MockFastify();
+
+    await new Promise((resolve) => {
+      fastifyDashboardPlugin(
+        fastify,
+        {
+          queues: { orders: mockQueue }
+        },
+        resolve
+      );
+    });
+
+    const res = await fastify.inject("/api/queues");
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, {
+      queues: [
+        {
+          name: "orders",
+          isPaused: false,
+          metrics: {
+            waiting: 42,
+            active: 3,
+            delayed: 7,
+            dlq: 1
+          }
+        }
+      ]
+    });
+  });
+
+  it("should return 503 for closed queue in Fastify /api/queues route", async () => {
+    const fastify = new MockFastify();
+
+    await new Promise((resolve) => {
+      fastifyDashboardPlugin(
+        fastify,
+        {
+          queues: {
+            healthy: mockQueue,
+            closed: closedQueue
+          }
+        },
+        resolve
+      );
+    });
+
+    const res = await fastify.inject("/api/queues");
+
+    assert.equal(res.statusCode, 503);
+    assert.equal(res.body.error.code, "QUEUE_CLOSED");
+  });
 });

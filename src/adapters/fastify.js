@@ -21,6 +21,11 @@ function fastifyDashboardPlugin(fastify, options = {}, done) {
     routeOptions.preHandler = options.preHandler;
   }
 
+  fastify.get("/api/queues", routeOptions, async (request, reply) => {
+    const result = await dispatcher.executeQueuesRoute();
+    reply.code(result.status).send(result.body);
+  });
+
   fastify.get(
     "/api/queues/:queueName/metrics",
     routeOptions,
