@@ -353,4 +353,87 @@ describe("Express Adapter with basePath option", () => {
     assert.equal(data.job.id, "base-job-1");
     assert.equal(data.job.state, "completed");
   });
+
+  it("should respond when requested under basePath prefix for queues listing", async () => {
+    const res = await fetch(`${serverUrl}/admin/queues/api/queues`);
+    assert.equal(res.status, 200);
+
+    const data = await res.json();
+    assert.deepEqual(data, {
+      queues: [
+        {
+          name: "notifications",
+          isPaused: false,
+          metrics: {
+            waiting: 1,
+            active: 0,
+            delayed: 0,
+            dlq: 0
+          }
+        }
+      ]
+    });
+  });
+});
+
+describe("Express Adapter with multiple queues (GET /api/queues)", () => {
+  let server;
+  let serverUrl;
+
+  const queue1 = {
+    isClosed: false,
+    isPaused: async () => false,
+    getMetrics: async () => ({ waiting: 10, active: 2, delayed: 0, dlq: 1 })
+  };
+
+  const queue2 = {
+    isClosed: false,
+    isPaused: async () => true,
+    getMetrics: async () => ({ waiting: 0, active: 0, delayed: 5, dlq: 0 })
+  };
+
+  before(async () => {
+    const adapter = createExpressAdapter({
+      queues: {
+        "queue-alpha": queue1,
+        "queue-beta": queue2
+      }
+    });
+
+    server = http.createServer(adapter);
+
+    await new Promise((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        serverUrl = `http://127.0.0.1:${address.port}`;
+        resolve();
+      });
+    });
+  });
+
+  after(async () => {
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("should return 200 OK with list of all registered queues", async () => {
+    const res = await fetch(`${serverUrl}/api/queues`);
+    assert.equal(res.status, 200);
+
+    const data = await res.json();
+    assert.equal(data.queues.length, 2);
+    assert.deepEqual(data.queues, [
+      {
+        name: "queue-alpha",
+        isPaused: false,
+        metrics: { waiting: 10, active: 2, delayed: 0, dlq: 1 }
+      },
+      {
+        name: "queue-beta",
+        isPaused: true,
+        metrics: { waiting: 0, active: 0, delayed: 5, dlq: 0 }
+      }
+    ]);
+  });
 });

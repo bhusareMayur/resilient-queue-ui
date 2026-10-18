@@ -203,10 +203,32 @@ describe("Live ResilientQueue Integration", () => {
     );
   });
 
-  it("should return 503 QUEUE_CLOSED after queue is closed for metrics, DLQ, and job inspection", async (t) => {
+  it("should retrieve registered queues summary from live Redis", async (t) => {
+    if (!redisAvailable) return t.skip();
+
+    const res = await fetch(`${serverUrl}/api/queues`);
+    assert.equal(res.status, 200);
+
+    const data = await res.json();
+    assert.equal(Array.isArray(data.queues), true);
+    assert.equal(data.queues.length, 1);
+    assert.equal(data.queues[0].name, "live-test");
+    assert.equal(data.queues[0].isPaused, false);
+    assert.equal(typeof data.queues[0].metrics.waiting, "number");
+    assert.equal(typeof data.queues[0].metrics.active, "number");
+    assert.equal(typeof data.queues[0].metrics.delayed, "number");
+    assert.equal(typeof data.queues[0].metrics.dlq, "number");
+  });
+
+  it("should return 503 QUEUE_CLOSED after queue is closed for queues summary, metrics, DLQ, and job inspection", async (t) => {
     if (!redisAvailable) return t.skip();
 
     await queue.close();
+
+    const resQueues = await fetch(`${serverUrl}/api/queues`);
+    assert.equal(resQueues.status, 503);
+    const dataQueues = await resQueues.json();
+    assert.equal(dataQueues.error.code, "QUEUE_CLOSED");
 
     const resMetrics = await fetch(`${serverUrl}/api/queues/live-test/metrics`);
     assert.equal(resMetrics.status, 503);

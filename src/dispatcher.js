@@ -4,6 +4,7 @@ const { QueueRegistry, createQueueRegistry } = require("./registry");
 const { handleGetMetrics } = require("./handlers/metrics");
 const { handleGetDLQ } = require("./handlers/dlq");
 const { handleGetJob, serializeJob } = require("./handlers/job");
+const { handleGetQueues } = require("./handlers/queues");
 
 /**
  * Creates the standard JSON error response envelope.
@@ -183,6 +184,45 @@ class DashboardDispatcher {
       ? String(options.basePath).replace(/\/+$/, "")
       : "";
     this.localOnlyPaused = Boolean(options?.localOnlyPaused);
+  }
+
+  /**
+   * Executes the GET /api/queues route logic.
+   *
+   * @returns {Promise<{ status: number, body: object }>}
+   */
+  async executeQueuesRoute() {
+    try {
+      const result = await handleGetQueues(this.registry, {
+        localOnlyPaused: this.localOnlyPaused
+      });
+
+      return {
+        status: 200,
+        body: result
+      };
+    } catch (err) {
+      if (
+        err &&
+        (err.code === "QUEUE_CLOSED" ||
+          err.statusCode === 503 ||
+          (typeof err.message === "string" &&
+            /queue is closed/i.test(err.message)))
+      ) {
+        return {
+          status: 503,
+          body: createErrorResponse("QUEUE_CLOSED", "Queue is closed")
+        };
+      }
+
+      return {
+        status: 500,
+        body: createErrorResponse(
+          "INTERNAL_ERROR",
+          err?.message || "Internal server error"
+        )
+      };
+    }
   }
 
   /**
@@ -547,11 +587,12 @@ class DashboardDispatcher {
       pathname = "/" + pathname;
     }
 
+    const queuesMatch = pathname.match(/^\/api\/queues\/?$/);
     const metricsMatch = pathname.match(/^\/api\/queues\/([^/]*)\/metrics\/?$/);
     const dlqMatch = pathname.match(/^\/api\/queues\/([^/]*)\/dlq\/?$/);
     const jobMatch = pathname.match(/^\/api\/queues\/([^/]*)\/jobs\/([^/]*)\/?$/);
 
-    if (!metricsMatch && !dlqMatch && !jobMatch) {
+    if (!queuesMatch && !metricsMatch && !dlqMatch && !jobMatch) {
       if (typeof next === "function") {
         return next();
       }
@@ -574,6 +615,11 @@ class DashboardDispatcher {
     }
 
     try {
+      if (queuesMatch) {
+        const result = await this.executeQueuesRoute();
+        return sendJson(res, result.status, result.body);
+      }
+
       if (metricsMatch) {
         const rawQueueName = metricsMatch[1];
         const result = await this.executeMetricsRoute(rawQueueName);
@@ -622,6 +668,7 @@ module.exports = {
   DashboardDispatcher,
   createDashboardDispatcher,
   createErrorResponse,
+  handleGetQueues,
   parseDLQQueryParams,
   sendJson,
   serializeJob
