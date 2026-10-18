@@ -86,6 +86,18 @@ describe("UI Components & Views", () => {
       const html = OverviewView.renderData([]);
       assert.match(html, /No Queues Registered/);
     });
+
+    it("should safely convert numbers and non-string values to strings in escapeHtml", () => {
+      const queues = [
+        {
+          name: 12345,
+          isPaused: false,
+          metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 }
+        }
+      ];
+      const html = OverviewView.renderData(queues);
+      assert.match(html, /12345/);
+    });
   });
 
   describe("Dead Letter Queue (DLQ) View Component", () => {
@@ -506,6 +518,46 @@ describe("UI Components & Views", () => {
       assert.match(html, /&lt;script&gt;alert\(&#039;id&#039;\)&lt;\/script&gt;/);
       assert.match(html, /&lt;img src=x/);
       assert.match(html, /&lt;svg onload/);
+    });
+
+    it("should format ISO string and Date timestamps correctly in JobView", () => {
+      const job = {
+        id: "job-ts-1",
+        state: "completed",
+        progress: 100,
+        createdAt: "2026-04-18T10:00:00.000Z",
+        completedAt: new Date(1776500000000)
+      };
+      const html = JobView.renderJobDetails(job, "emails");
+      // Ensure timestamps are formatted into date strings and not "-"
+      assert.doesNotMatch(html, /<dd class="metric-num">-<\/dd>/);
+      assert.match(html, /2026/);
+    });
+
+    it("should show Clear button in JobView toolbar when error or query is present", () => {
+      const htmlError = JobView.renderSearchToolbar(
+        { error: { message: "Job not found" }, jobId: "job-err" },
+        [{ name: "emails" }],
+        "emails"
+      );
+      assert.match(htmlError, /id="job-clear-btn"/);
+      assert.match(htmlError, /Clear/);
+
+      const htmlWithId = JobView.renderSearchToolbar(
+        { job: null, error: null, jobId: "some-job" },
+        [{ name: "emails" }],
+        "emails"
+      );
+      assert.match(htmlWithId, /id="job-clear-btn"/);
+    });
+
+    it("should hide Clear button in JobView toolbar when search state is clean", () => {
+      const htmlClean = JobView.renderSearchToolbar(
+        { job: null, error: null, jobId: "" },
+        [{ name: "emails" }],
+        "emails"
+      );
+      assert.doesNotMatch(htmlClean, /id="job-clear-btn"/);
     });
   });
 

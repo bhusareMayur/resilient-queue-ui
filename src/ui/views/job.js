@@ -21,11 +21,13 @@ function escapeHtml(str) {
 }
 
 function formatTimestamp(ts) {
-  if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) {
+  if (!ts) return "-";
+  const num = typeof ts === "number" ? ts : (ts instanceof Date ? ts.getTime() : Date.parse(ts));
+  if (typeof num !== "number" || !Number.isFinite(num) || num <= 0) {
     return "-";
   }
   try {
-    const d = new Date(ts);
+    const d = new Date(num);
     if (Number.isNaN(d.getTime())) return "-";
     return d.toLocaleString(undefined, {
       year: "numeric",
@@ -369,7 +371,7 @@ function renderJobSearchToolbar(state = {}, queues = [], selectedQueue = "") {
     queueOptions = `<option value="${escapeHtml(selectedQueue)}" selected>${escapeHtml(selectedQueue)} (Not in registry)</option>` + queueOptions;
   }
 
-  const hasActiveJob = Boolean(state.job);
+  const hasActiveSearch = Boolean(state.job || state.error || (state.jobId && state.jobId.trim().length > 0));
 
   return `
     <section class="dlq-toolbar job-search-toolbar" aria-label="Job Inspector Controls">
@@ -404,7 +406,7 @@ function renderJobSearchToolbar(state = {}, queues = [], selectedQueue = "") {
             <span>Inspect</span>
           </button>
           ${
-            hasActiveJob
+            hasActiveSearch
               ? `
             <button
               type="button"
