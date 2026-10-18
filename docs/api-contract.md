@@ -487,7 +487,7 @@ The JSON payloads map directly to the public TypeScript definitions exported by 
 
 ## 7. Package Portability & Import Interface Guidelines
 
-To ensure the contents of `Frontend/` can be published cleanly as `@mayurbhusare/resilient-queue-ui` in an independent repository:
+To ensure `@mayurbhusare/resilient-queue-ui` remains self-contained, independent, and cleanly publishable from this standalone repository:
 
 1. **Strict Public Package Imports Only**:
    - The UI package MUST import classes and types exclusively through the published package interface:
@@ -497,7 +497,7 @@ To ensure the contents of `Frontend/` can be published cleanly as `@mayurbhusare
      ```
    - **Forbidden**: Never use relative path traversal (`../../src/...`) or internal submodule imports (`@mayurbhusare/resilient-queue/src/...`).
 2. **Dependency Declaration**:
-   - `@mayurbhusare/resilient-queue` must be declared as a `peerDependency` (and `devDependency` for local testing) in `Frontend/package.json`.
+   - `@mayurbhusare/resilient-queue` must be declared as a `peerDependency` (and `devDependency` for local testing) in `package.json`.
 3. **Framework-Agnostic Core**:
    - The adapter handlers must take standard plain-JS parameters:
      ```typescript
