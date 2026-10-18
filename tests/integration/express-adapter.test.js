@@ -66,11 +66,18 @@ describe("Express Adapter Integration", () => {
     getJob: async () => null
   };
 
+  const mockUnsupportedQueue = {
+    isClosed: false,
+    isPaused: async () => false,
+    getMetrics: async () => ({ waiting: 0, active: 0, delayed: 0, dlq: 0 })
+  };
+
   before(async () => {
     const adapter = createExpressAdapter({
       queues: {
         "email-queue": mockEmailQueue,
-        "closed-queue": mockClosedQueue
+        "closed-queue": mockClosedQueue,
+        "unsupported-queue": mockUnsupportedQueue
       }
     });
 
@@ -277,6 +284,15 @@ describe("Express Adapter Integration", () => {
         }
       });
     });
+
+    it("should return 501 Not Implemented when queue does not support getJob", async () => {
+      const res = await fetch(`${serverUrl}/api/queues/unsupported-queue/jobs/job-123`);
+      assert.equal(res.status, 501);
+
+      const data = await res.json();
+      assert.equal(data.error.code, "NOT_SUPPORTED");
+      assert.match(data.error.message, /does not implement getJob/);
+    });
   });
 });
 
@@ -373,6 +389,78 @@ describe("Express Adapter with basePath option", () => {
         }
       ]
     });
+  });
+
+  it("should serve index.html when requesting basePath without trailing slash", async () => {
+    const res = await fetch(`${serverUrl}/admin/queues`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /text\/html/);
+    const html = await res.text();
+    assert.match(html, /ResilientQueue Dashboard/);
+  });
+
+  it("should serve index.html when requesting basePath with trailing slash and query string", async () => {
+    const res = await fetch(`${serverUrl}/admin/queues/?view=dlq&refresh=1`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /text\/html/);
+    const html = await res.text();
+    assert.match(html, /ResilientQueue Dashboard/);
+  });
+
+  it("should support API routes inside basePath with trailing slash", async () => {
+    const res = await fetch(`${serverUrl}/admin/queues/api/queues/`);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.queues.length, 1);
+  });
+
+  it("should support query parameters on DLQ API route inside basePath", async () => {
+    const res = await fetch(`${serverUrl}/admin/queues/api/queues/notifications/dlq?start=0&limit=10&order=desc`);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.start, 0);
+    assert.equal(data.limit, 10);
+    assert.equal(data.order, "desc");
+  });
+
+  it("should call next() and fall through when requested outside basePath", async () => {
+    const res = await fetch(`${serverUrl}/api/queues`);
+    assert.equal(res.status, 404);
+
+    const data = await res.json();
+    assert.deepEqual(data, { error: "not found" });
+  });
+
+  it("should call next() and fall through when query string is attached outside basePath", async () => {
+    const res = await fetch(`${serverUrl}/api/queues?filter=all`);
+    assert.equal(res.status, 404);
+
+    const data = await res.json();
+    assert.deepEqual(data, { error: "not found" });
+  });
+
+  it("should call next() and fall through for prefix mismatch outside basePath boundary", async () => {
+    const res = await fetch(`${serverUrl}/admin/queues_fake/api/queues`);
+    assert.equal(res.status, 404);
+
+    const data = await res.json();
+    assert.deepEqual(data, { error: "not found" });
+  });
+
+  it("should call next() and fall through for root request outside basePath", async () => {
+    const res = await fetch(`${serverUrl}/`);
+    assert.equal(res.status, 404);
+
+    const data = await res.json();
+    assert.deepEqual(data, { error: "not found" });
+  });
+
+  it("should call next() and fall through for static asset requests outside basePath", async () => {
+    const res = await fetch(`${serverUrl}/styles.css`);
+    assert.equal(res.status, 404);
+
+    const data = await res.json();
+    assert.deepEqual(data, { error: "not found" });
   });
 });
 

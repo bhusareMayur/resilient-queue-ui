@@ -561,6 +561,12 @@
           this.state.job.selectedQueue = e.target.value.trim() || null;
           this.state.job.job = null;
           this.state.job.error = null;
+          if (typeof window !== "undefined" && window.location) {
+            window.location.hash = this.state.job.selectedQueue
+              ? `#/job?queue=${encodeURIComponent(this.state.job.selectedQueue)}`
+              : `#/job`;
+          }
+          this.renderView();
         });
       }
 

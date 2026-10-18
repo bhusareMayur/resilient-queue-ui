@@ -93,8 +93,14 @@ function sendStaticFile(res, filePath, contentType) {
       res.type(contentType);
     } else if (typeof res.setHeader === "function") {
       res.setHeader("Content-Type", contentType);
-      res.setHeader("Content-Length", Buffer.byteLength(content));
+    }
+
+    if (typeof res.header === "function") {
+      res.header("Cache-Control", "public, max-age=300");
+      res.header("Content-Length", Buffer.byteLength(content));
+    } else if (typeof res.setHeader === "function") {
       res.setHeader("Cache-Control", "public, max-age=300");
+      res.setHeader("Content-Length", Buffer.byteLength(content));
     }
 
     if (typeof res.status === "function") {
@@ -698,7 +704,7 @@ class DashboardDispatcher {
    * @param {function} [next]
    */
   async dispatch(req, res, next) {
-    let pathname = req.path || req.url || "/";
+    let pathname = (this.basePath && req.originalUrl) ? req.originalUrl : (req.path || req.url || "/");
     const queryIdx = pathname.indexOf("?");
     if (queryIdx !== -1) {
       pathname = pathname.slice(0, queryIdx);
@@ -709,6 +715,15 @@ class DashboardDispatcher {
         pathname = "/";
       } else if (pathname.startsWith(this.basePath + "/")) {
         pathname = pathname.slice(this.basePath.length);
+      } else {
+        if (typeof next === "function") {
+          return next();
+        }
+        return sendJson(
+          res,
+          404,
+          createErrorResponse("ROUTE_NOT_FOUND", "Route not found")
+        );
       }
     }
 
@@ -769,9 +784,10 @@ class DashboardDispatcher {
       if (dlqMatch) {
         const rawQueueName = dlqMatch[1];
         let query = req.query;
-        if (!query && req.url && req.url.includes("?")) {
+        const rawUrl = req.originalUrl || req.url;
+        if (!query && rawUrl && rawUrl.includes("?")) {
           try {
-            const parsedUrl = new URL(req.url, "http://localhost");
+            const parsedUrl = new URL(rawUrl, "http://localhost");
             query = Object.fromEntries(parsedUrl.searchParams.entries());
           } catch {
             query = {};

@@ -327,6 +327,33 @@ describe("Fastify Dashboard Plugin Integration", () => {
     assert.equal(res.body.error.code, "QUEUE_CLOSED");
   });
 
+  it("should return 501 when queue lacks getJob in Fastify Job route", async () => {
+    const unsupportedQueue = {
+      isClosed: false,
+      isPaused: async () => false,
+      getMetrics: async () => ({ waiting: 0, active: 0, delayed: 0, dlq: 0 })
+    };
+
+    const fastify = new MockFastify();
+    await new Promise((resolve) => {
+      fastifyDashboardPlugin(
+        fastify,
+        {
+          queues: { unsupported: unsupportedQueue }
+        },
+        resolve
+      );
+    });
+
+    const res = await fastify.inject("/api/queues/:queueName/jobs/:jobId", {
+      queueName: "unsupported",
+      jobId: "order-abc-123"
+    });
+
+    assert.equal(res.statusCode, 501);
+    assert.equal(res.body.error.code, "NOT_SUPPORTED");
+  });
+
   it("should register route and execute handler returning 200 OK for GET /api/queues", async () => {
     const fastify = new MockFastify();
 
