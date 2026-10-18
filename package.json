@@ -1,0 +1,36 @@
+{
+  "name": "@mayurbhusare/resilient-queue-ui",
+  "version": "0.1.0",
+  "description": "Standalone administration dashboard and API adapter for @mayurbhusare/resilient-queue",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "license": "MIT",
+  "author": "Mayur S. Bhusare",
+  "keywords": [
+    "redis",
+    "queue",
+    "dashboard",
+    "admin",
+    "ui",
+    "monitoring",
+    "resilient-queue",
+    "job-queue"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/resilient-queue/resilient-queue-ui.git"
+  },
+  "bugs": {
+    "url": "https://github.com/resilient-queue/resilient-queue-ui/issues"
+  },
+  "homepage": "https://github.com/resilient-queue/resilient-queue-ui#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "peerDependencies": {
+    "@mayurbhusare/resilient-queue": "^2.0.0"
+  }
+}
