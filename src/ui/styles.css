@@ -450,6 +450,26 @@ button {
   text-decoration: none;
 }
 
+.badge-completed {
+  background-color: var(--status-active-subtle);
+  color: var(--status-active);
+}
+
+.badge-failed {
+  background-color: var(--status-error-subtle);
+  color: var(--status-error);
+}
+
+.badge-waiting {
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.badge-delayed {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+}
+
 .view-dlq-link {
   cursor: pointer;
   transition: opacity 0.15s;
@@ -627,6 +647,53 @@ button {
 .form-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.form-input {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.form-input:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+.job-search-form {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+/* Progress Bar */
+.progress-container {
+  margin-bottom: 1.25rem;
+  padding: 0.85rem 1rem;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background-color: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0284c7, #38bdf8);
+  border-radius: var(--radius-sm);
+  transition: width 0.3s ease;
 }
 
 /* DLQ Table & Item Details */
@@ -807,5 +874,28 @@ button {
 
   .dlq-toolbar > div:last-child button {
     width: 100%;
+  }
+
+  .job-search-form {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .job-search-form .form-group {
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .job-search-form .form-input {
+    width: 100%;
+  }
+
+  .job-search-form > div:last-child {
+    width: 100%;
+  }
+
+  .job-search-form > div:last-child button {
+    flex: 1;
   }
 }

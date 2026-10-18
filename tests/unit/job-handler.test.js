@@ -183,4 +183,18 @@ describe("handleGetJob", () => {
       message: /jobId must be a non-empty string/
     });
   });
+
+  it("should throw NOT_SUPPORTED when queue instance does not implement getJob", async () => {
+    const mockQueue = { isClosed: false };
+
+    await assert.rejects(
+      async () => await handleGetJob(mockQueue, "any-id"),
+      (err) => {
+        assert.equal(err.code, "NOT_SUPPORTED");
+        assert.equal(err.statusCode, 501);
+        assert.match(err.message, /does not implement getJob/);
+        return true;
+      }
+    );
+  });
 });

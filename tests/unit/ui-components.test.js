@@ -208,7 +208,7 @@ describe("UI Components & Views", () => {
       assert.doesNotMatch(html, /null<\/span>/);
     });
 
-    it("should render expanded job details with formatted payload and core compatibility note", () => {
+    it("should render expanded job details with formatted payload and cross-link to Job Inspector", () => {
       const job = {
         id: "job-abc",
         attempt: 2,
@@ -218,12 +218,16 @@ describe("UI Components & Views", () => {
         failureReason: "Database constraint error",
         data: { email: "user@example.com" }
       };
-      const html = DLQView.renderJobDetail(job, false);
-      assert.match(html, /job-abc/);
-      assert.match(html, /Database constraint error/);
-      assert.match(html, /user@example\.com/);
-      assert.match(html, /Compatibility Note/);
-      assert.match(html, /<code>getJob\(\)<\/code> is unavailable in published <code>@mayurbhusare\/resilient-queue@2\.0\.2<\/code>/);
+      const htmlWithQueue = DLQView.renderJobDetail(job, false, "orders");
+      assert.match(htmlWithQueue, /job-abc/);
+      assert.match(htmlWithQueue, /Database constraint error/);
+      assert.match(htmlWithQueue, /user@example\.com/);
+      assert.match(htmlWithQueue, /Inspect in Job Inspector/);
+      assert.match(htmlWithQueue, /data-queue="orders"/);
+      assert.match(htmlWithQueue, /data-job-id="job-abc"/);
+
+      const htmlWithoutQueue = DLQView.renderJobDetail(job, false);
+      assert.match(htmlWithoutQueue, /All diagnostics above are retrieved directly from the Dead Letter Queue record/);
     });
 
     it("should render expanded corrupted job details preserving raw content safely", () => {
@@ -306,16 +310,202 @@ describe("UI Components & Views", () => {
     });
   });
 
-  describe("Job Inspection View Component & Compatibility Disclosure", () => {
-    it("should display explicit compatibility notice regarding @mayurbhusare/resilient-queue@2.0.2 lacking getJob()", () => {
-      const html = JobView.render();
+  describe("Job Inspection View Component (Milestone 7)", () => {
+    it("should render prompt select state when no job is requested", () => {
+      const html = JobView.render({}, [{ name: "emails" }]);
+      assert.match(html, /Inspect a Job/);
+      assert.match(html, /Select a registered queue and enter a unique Job ID/);
+      assert.match(html, /id="job-search-form"/);
+      assert.match(html, /id="job-queue-select"/);
+      assert.match(html, /id="job-id-input"/);
+    });
 
-      assert.match(html, /Core Library Compatibility Notice/);
-      assert.match(html, /getJob\(\) Unavailable in v2\.0\.2/);
-      assert.match(html, /@mayurbhusare\/resilient-queue@2\.0\.2/);
-      assert.match(html, /does not expose the <code>queue\.getJob\(id\)<\/code> public method/);
-      assert.match(html, /Unavailable in v2\.0\.2/);
-      assert.match(html, /disabled/i);
+    it("should render empty state when no queues are registered", () => {
+      const html = JobView.render({}, []);
+      assert.match(html, /No Queues Registered/);
+      assert.match(html, /createExpressAdapter/);
+    });
+
+    it("should render loading state with accessible ARIA attributes", () => {
+      const html = JobView.render(
+        { loading: true, selectedQueue: "emails", jobId: "job-101" },
+        [{ name: "emails" }]
+      );
+      assert.match(html, /role="status"/);
+      assert.match(html, /aria-live="polite"/);
+      assert.match(html, /class="spinner"/);
+      assert.match(html, /Inspecting Job\.\.\./);
+      assert.match(html, /job-101/);
+      assert.match(html, /emails/);
+    });
+
+    it("should render 404 JOB_NOT_FOUND state when job is not found", () => {
+      const error = { code: "JOB_NOT_FOUND", status: 404 };
+      const html = JobView.render(
+        { error, selectedQueue: "orders", jobId: "nonexistent-job" },
+        [{ name: "orders" }]
+      );
+      assert.match(html, /Job Not Found/);
+      assert.match(html, /nonexistent-job/);
+      assert.match(html, /orders/);
+      assert.match(html, /JOB_NOT_FOUND/);
+    });
+
+    it("should render 404 QUEUE_NOT_FOUND state when queue is not registered", () => {
+      const error = { code: "QUEUE_NOT_FOUND", status: 404, message: "Queue unknown-queue is not registered" };
+      const html = JobView.render(
+        { error, selectedQueue: "unknown-queue", jobId: "job-1" },
+        [{ name: "orders" }]
+      );
+      assert.match(html, /Queue Not Registered/);
+      assert.match(html, /unknown-queue/);
+    });
+
+    it("should render 400 VALIDATION_ERROR state on missing parameters", () => {
+      const error = { code: "VALIDATION_ERROR", status: 400, message: "jobId must be a non-empty string." };
+      const html = JobView.render(
+        { error, selectedQueue: "orders", jobId: "" },
+        [{ name: "orders" }]
+      );
+      assert.match(html, /Invalid Search Parameter/);
+      assert.match(html, /jobId must be a non-empty string\./);
+    });
+
+    it("should render 501 NOT_SUPPORTED compatibility warning when queue does not support getJob", () => {
+      const error = { code: "NOT_SUPPORTED", status: 501 };
+      const html = JobView.render(
+        { error, selectedQueue: "legacy-queue", jobId: "job-1" },
+        [{ name: "legacy-queue" }]
+      );
+      assert.match(html, /Core Library Compatibility: getJob\(\) Not Supported/);
+      assert.match(html, /does not implement the public <code>getJob\(id\)<\/code> API/);
+    });
+
+    it("should render generic error state with retry action on internal error", () => {
+      const error = { code: "INTERNAL_ERROR", status: 500, message: "Redis connection timed out" };
+      const html = JobView.render(
+        { error, selectedQueue: "orders", jobId: "job-1" },
+        [{ name: "orders" }]
+      );
+      assert.match(html, /Failed to Inspect Job/);
+      assert.match(html, /Redis connection timed out/);
+      assert.match(html, /id="job-retry-btn"/);
+    });
+
+    it("should render complete job details with state badges, progress bar, timing, and payloads", () => {
+      const job = {
+        id: "job-video-99",
+        state: "active",
+        progress: 72,
+        attempt: 2,
+        stalledCount: 1,
+        createdAt: 1700000000000,
+        startedAt: 1700000010000,
+        completedAt: null,
+        failedAt: null,
+        retriedAt: null,
+        failureReason: null,
+        idempotencyKey: "idem-vid-99",
+        delay: 5000,
+        ttlSeconds: 86400,
+        removeOnComplete: true,
+        removeOnFail: 50,
+        data: { inputUri: "s3://bucket/video.mov", format: "mp4" },
+        returnValue: null
+      };
+
+      const html = JobView.render(
+        { job, selectedQueue: "video-transcoding", jobId: "job-video-99" },
+        [{ name: "video-transcoding" }]
+      );
+
+      assert.match(html, /job-video-99/);
+      assert.match(html, /badge-active/);
+      assert.match(html, /State: active/);
+      assert.match(html, /style="width: 72%;"/);
+      assert.match(html, /72%/);
+      assert.match(html, /idem-vid-99/);
+      assert.match(html, /5000ms/);
+      assert.match(html, /86400s/);
+      assert.match(html, /Remove immediately/);
+      assert.match(html, /Keep latest 50 jobs/);
+      assert.match(html, /s3:\/\/bucket\/video\.mov/);
+    });
+
+    it("should render completed job with return value", () => {
+      const job = {
+        id: "job-completed-1",
+        state: "completed",
+        progress: 100,
+        attempt: 1,
+        stalledCount: 0,
+        createdAt: 1700000000000,
+        startedAt: 1700000010000,
+        completedAt: 1700000020000,
+        data: { target: "email" },
+        returnValue: { messageId: "msg-12345", status: "SENT" }
+      };
+
+      const html = JobView.render(
+        { job, selectedQueue: "emails", jobId: "job-completed-1" },
+        [{ name: "emails" }]
+      );
+
+      assert.match(html, /badge-completed/);
+      assert.match(html, /State: completed/);
+      assert.match(html, /msg-12345/);
+      assert.match(html, /SENT/);
+    });
+
+    it("should render failed job with failure diagnostics callout", () => {
+      const job = {
+        id: "job-failed-1",
+        state: "failed",
+        progress: 50,
+        attempt: 3,
+        stalledCount: 2,
+        createdAt: 1700000000000,
+        startedAt: 1700000010000,
+        failedAt: 1700000030000,
+        failureReason: "ECONNREFUSED 127.0.0.1:5432",
+        data: { query: "SELECT * FROM users" }
+      };
+
+      const html = JobView.render(
+        { job, selectedQueue: "db-sync", jobId: "job-failed-1" },
+        [{ name: "db-sync" }]
+      );
+
+      assert.match(html, /badge-failed/);
+      assert.match(html, /State: failed/);
+      assert.match(html, /ECONNREFUSED 127\.0\.0\.1:5432/);
+      assert.match(html, /SELECT \* FROM users/);
+    });
+
+    it("should safely sanitize malicious job properties to prevent XSS", () => {
+      const maliciousJob = {
+        id: "<script>alert('id')</script>",
+        state: "<img src=x onerror=alert('state')>",
+        progress: 0,
+        attempt: 1,
+        failureReason: "<script>alert('err')</script>",
+        idempotencyKey: "<b onmouseover=alert(1)>key</b>",
+        data: { payload: "<svg onload=alert('data')>" },
+        returnValue: { output: "<iframe src='evil.com'></iframe>" }
+      };
+
+      const html = JobView.render(
+        { job: maliciousJob, selectedQueue: "test-queue", jobId: "<script>alert('id')</script>" },
+        [{ name: "test-queue" }]
+      );
+
+      assert.doesNotMatch(html, /<script>/i);
+      assert.doesNotMatch(html, /<img src=x/i);
+      assert.doesNotMatch(html, /<svg onload/i);
+      assert.doesNotMatch(html, /<iframe src/i);
+      assert.match(html, /&lt;script&gt;alert\(&#039;id&#039;\)&lt;\/script&gt;/);
+      assert.match(html, /&lt;img src=x/);
+      assert.match(html, /&lt;svg onload/);
     });
   });
 
@@ -520,6 +710,146 @@ describe("UI Components & Views", () => {
 
         app.handleHashChange();
         assert.equal(navigated, false);
+      } finally {
+        globalThis.window = originalWindow;
+      }
+    });
+
+    it("should fetch job descriptor and update internal job state on success", async () => {
+      const mockJob = {
+        id: "job-xyz",
+        state: "completed",
+        progress: 100,
+        data: { test: true }
+      };
+      const mockApiClient = {
+        getJob: async (queue, jobId) => {
+          assert.equal(queue, "emails");
+          assert.equal(jobId, "job-xyz");
+          return { job: mockJob };
+        }
+      };
+
+      const app = new DashboardApp({ apiClient: mockApiClient });
+      await app.fetchJob("emails", "job-xyz");
+
+      assert.equal(app.state.job.loading, false);
+      assert.equal(app.state.job.error, null);
+      assert.deepEqual(app.state.job.job, mockJob);
+      assert.equal(app.state.job.selectedQueue, "emails");
+      assert.equal(app.state.job.jobId, "job-xyz");
+    });
+
+    it("should set validation error in fetchJob when queue or jobId is omitted", async () => {
+      const app = new DashboardApp({ apiClient: {} });
+      await app.fetchJob("", "job-1");
+
+      assert.equal(app.state.job.loading, false);
+      assert.equal(app.state.job.error?.code, "VALIDATION_ERROR");
+      assert.match(app.state.job.error.message, /Please select a registered queue/);
+
+      await app.fetchJob("emails", "");
+      assert.equal(app.state.job.loading, false);
+      assert.equal(app.state.job.error?.code, "VALIDATION_ERROR");
+      assert.match(app.state.job.error.message, /jobId must be a non-empty string/);
+    });
+
+    it("should record job error state on API failure", async () => {
+      const mockError = new Error("404 Not Found");
+      mockError.status = 404;
+      mockError.code = "JOB_NOT_FOUND";
+
+      const mockApiClient = {
+        getJob: async () => {
+          throw mockError;
+        }
+      };
+
+      const app = new DashboardApp({ apiClient: mockApiClient });
+      await app.fetchJob("emails", "missing-job");
+
+      assert.equal(app.state.job.loading, false);
+      assert.equal(app.state.job.error, mockError);
+      assert.equal(app.state.job.job, null);
+    });
+
+    it("should ignore stale out-of-order job responses", async () => {
+      let resolveFirst;
+      const firstPromise = new Promise((resolve) => {
+        resolveFirst = resolve;
+      });
+
+      const mockApiClient = {
+        getJob: async (queue, id) => {
+          if (id === "slow-job") {
+            await firstPromise;
+            return { job: { id: "slow-job", state: "active" } };
+          }
+          return { job: { id: "fast-job", state: "completed" } };
+        }
+      };
+
+      const app = new DashboardApp({ apiClient: mockApiClient });
+      app.state.job.selectedQueue = "orders";
+
+      // Request 1: slow-job
+      const p1 = app.fetchJob("orders", "slow-job");
+
+      // Request 2: fast-job before p1 completes
+      const p2 = app.fetchJob("orders", "fast-job");
+
+      await p2;
+      assert.equal(app.state.job.jobId, "fast-job");
+      assert.equal(app.state.job.job.id, "fast-job");
+
+      // Resolve older slow-job
+      resolveFirst();
+      await p1;
+
+      // State should not be overwritten
+      assert.equal(app.state.job.jobId, "fast-job");
+      assert.equal(app.state.job.job.id, "fast-job");
+    });
+
+    it("should handle navigate('job', { queue: 'emails', jobId: 'job-55' }) and trigger fetchJob", () => {
+      let fetchedParams = null;
+      const mockApiClient = {
+        getJob: async (q, id) => {
+          fetchedParams = { q, id };
+          return { job: { id, state: "waiting" } };
+        }
+      };
+
+      const app = new DashboardApp({ apiClient: mockApiClient });
+      app.navigate("job", { queue: "emails", jobId: "job-55" });
+
+      assert.equal(app.state.activeView, "job");
+      assert.equal(app.state.job.selectedQueue, "emails");
+      assert.equal(app.state.job.jobId, "job-55");
+      assert.deepEqual(fetchedParams, { q: "emails", id: "job-55" });
+    });
+
+    it("should handle hash routing for #/job?queue=orders&jobId=job-99", () => {
+      let fetchedParams = null;
+      const mockApiClient = {
+        getJob: async (q, id) => {
+          fetchedParams = { q, id };
+          return { job: { id, state: "completed" } };
+        }
+      };
+
+      const app = new DashboardApp({ apiClient: mockApiClient });
+      const originalWindow = globalThis.window;
+      try {
+        globalThis.window = {
+          location: { hash: "#/job?queue=orders&jobId=job-99" }
+        };
+
+        app.handleHashChange();
+        assert.equal(app.state.activeView, "job");
+        assert.equal(app.state.job.selectedQueue, "orders");
+        assert.equal(app.state.job.jobId, "job-99");
+        assert.deepEqual(fetchedParams, { q: "orders", id: "job-99" });
       } finally {
         globalThis.window = originalWindow;
       }

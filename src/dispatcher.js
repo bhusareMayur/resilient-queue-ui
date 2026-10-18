@@ -665,6 +665,21 @@ class DashboardDispatcher {
         };
       }
 
+      if (
+        err &&
+        (err.code === "NOT_SUPPORTED" ||
+          err.statusCode === 501 ||
+          (typeof err.message === "string" && /does not implement getJob/i.test(err.message)))
+      ) {
+        return {
+          status: 501,
+          body: createErrorResponse(
+            "NOT_SUPPORTED",
+            err.message || "Job inspection is not supported by this queue instance"
+          )
+        };
+      }
+
       return {
         status: 500,
         body: createErrorResponse(
