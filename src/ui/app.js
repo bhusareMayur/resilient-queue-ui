@@ -49,8 +49,24 @@
         queues: [],
         loading: false,
         error: null,
-        lastUpdated: null
+        lastUpdated: null,
+
+        // Dead Letter Queue (DLQ) Explorer State
+        dlq: {
+          selectedQueue: null,
+          start: 0,
+          limit: 50,
+          order: "desc",
+          total: 0,
+          jobs: [],
+          loading: false,
+          error: null,
+          expandedJobIndex: null
+        }
       };
+
+      this._queuesRequestId = 0;
+      this._dlqRequestId = 0;
 
       this.viewTitles = {
         overview: "Queue Overview",
@@ -70,10 +86,7 @@
 
       // Initial route from URL hash if present
       if (typeof window !== "undefined" && window.location.hash) {
-        const route = window.location.hash.replace(/^#\/?/, "");
-        if (route && this.viewTitles[route]) {
-          this.state.activeView = route;
-        }
+        this.handleHashChange();
       }
 
       this.fetchQueues();
@@ -87,6 +100,8 @@
         return;
       }
 
+      const requestId = ++this._queuesRequestId;
+
       this.state.loading = true;
       this.state.error = null;
       this.updateStatusIndicator("loading", "Fetching metrics...");
@@ -97,14 +112,76 @@
 
       try {
         const response = await this.apiClient.getQueues();
+        if (requestId !== this._queuesRequestId) {
+          return;
+        }
+
         this.state.queues = Array.isArray(response?.queues) ? response.queues : [];
         this.state.loading = false;
         this.state.lastUpdated = new Date();
         this.updateStatusIndicator("online", `Connected (${this.state.queues.length} queues)`);
+
+        // If on DLQ view without selected queue, pick a candidate
+        if (this.state.activeView === "dlq" && !this.state.dlq.selectedQueue && this.state.queues.length > 0) {
+          const candidate = this.state.queues.find((q) => (q?.metrics?.dlq || 0) > 0) || this.state.queues[0];
+          if (candidate?.name) {
+            this.state.dlq.selectedQueue = candidate.name;
+            this.fetchDLQ();
+          }
+        }
       } catch (err) {
+        if (requestId !== this._queuesRequestId) {
+          return;
+        }
+
         this.state.loading = false;
         this.state.error = err;
         this.updateStatusIndicator("offline", "API Error");
+      }
+
+      this.renderView();
+    }
+
+    /**
+     * Fetches Dead Letter Queue items for the currently selected queue.
+     */
+    async fetchDLQ() {
+      if (!this.apiClient || !this.state.dlq.selectedQueue) {
+        return;
+      }
+
+      const requestId = ++this._dlqRequestId;
+      const requestedQueue = this.state.dlq.selectedQueue;
+
+      this.state.dlq.loading = true;
+      this.state.dlq.error = null;
+      this.renderView();
+
+      try {
+        const response = await this.apiClient.getQueueDLQ(requestedQueue, {
+          start: this.state.dlq.start,
+          limit: this.state.dlq.limit,
+          order: this.state.dlq.order
+        });
+
+        if (requestId !== this._dlqRequestId || this.state.dlq.selectedQueue !== requestedQueue) {
+          return;
+        }
+
+        this.state.dlq.loading = false;
+        this.state.dlq.jobs = Array.isArray(response?.jobs) ? response.jobs : [];
+        this.state.dlq.total = typeof response?.total === "number" ? response.total : this.state.dlq.jobs.length;
+        this.state.dlq.start = typeof response?.start === "number" ? response.start : this.state.dlq.start;
+        this.state.dlq.limit = typeof response?.limit === "number" ? response.limit : this.state.dlq.limit;
+        this.state.dlq.order = response?.order || this.state.dlq.order;
+      } catch (err) {
+        if (requestId !== this._dlqRequestId || this.state.dlq.selectedQueue !== requestedQueue) {
+          return;
+        }
+
+        this.state.dlq.loading = false;
+        this.state.dlq.error = err;
+        this.state.dlq.jobs = [];
       }
 
       this.renderView();
@@ -134,16 +211,38 @@
      * Switches the active navigation view.
      *
      * @param {"overview"|"dlq"|"job"} viewName
+     * @param {object} [params={}] Optional routing parameters (e.g. { queue: "emails" })
      */
-    navigate(viewName) {
+    navigate(viewName, params = {}) {
       if (!this.viewTitles[viewName]) {
         viewName = "overview";
       }
 
       this.state.activeView = viewName;
 
+      if (viewName === "dlq") {
+        if (params.queue) {
+          this.state.dlq.selectedQueue = params.queue;
+          this.state.dlq.start = 0;
+          this.state.dlq.expandedJobIndex = null;
+          this.fetchDLQ();
+        } else if (!this.state.dlq.selectedQueue && this.state.queues.length > 0) {
+          const candidate = this.state.queues.find((q) => (q?.metrics?.dlq || 0) > 0) || this.state.queues[0];
+          if (candidate?.name) {
+            this.state.dlq.selectedQueue = candidate.name;
+            this.state.dlq.start = 0;
+            this.state.dlq.expandedJobIndex = null;
+            this.fetchDLQ();
+          }
+        }
+      }
+
       if (typeof window !== "undefined" && window.location) {
-        window.location.hash = `#/${viewName}`;
+        let hash = `#/${viewName}`;
+        if (viewName === "dlq" && this.state.dlq.selectedQueue) {
+          hash += `?queue=${encodeURIComponent(this.state.dlq.selectedQueue)}`;
+        }
+        window.location.hash = hash;
       }
 
       this.updateNavigationUI();
@@ -184,6 +283,11 @@
       const container = document.getElementById(this.containerId);
       if (!container) return;
 
+      const activeElementId = document.activeElement ? document.activeElement.id : null;
+      const activeJobIndex = document.activeElement && document.activeElement.classList?.contains("dlq-inspect-btn")
+        ? document.activeElement.getAttribute("data-job-index")
+        : null;
+
       let html = "";
 
       if (this.state.activeView === "overview") {
@@ -195,20 +299,147 @@
           html = OverviewView.renderData(this.state.queues);
         }
       } else if (this.state.activeView === "dlq") {
-        html = DLQView.render(this.state.queues);
+        html = DLQView.render(this.state.dlq, this.state.queues);
       } else if (this.state.activeView === "job") {
         html = JobView.render();
       }
 
       container.innerHTML = html;
+      this.bindViewEvents();
 
-      // Bind retry button if present
-      const retryBtn = document.getElementById("retry-overview-btn");
-      if (retryBtn) {
-        retryBtn.addEventListener("click", () => {
+      // Restore active focus if the element was re-rendered
+      if (activeElementId) {
+        const el = document.getElementById(activeElementId);
+        if (el && typeof el.focus === "function") {
+          el.focus();
+        }
+      } else if (activeJobIndex !== null) {
+        const el = document.querySelector(`.dlq-inspect-btn[data-job-index="${activeJobIndex}"]`);
+        if (el && typeof el.focus === "function") {
+          el.focus();
+        }
+      }
+    }
+
+    /**
+     * Attaches interactive event handlers to currently rendered view elements.
+     */
+    bindViewEvents() {
+      if (typeof document === "undefined") return;
+
+      // Retry overview button
+      const retryOverviewBtn = document.getElementById("retry-overview-btn");
+      if (retryOverviewBtn) {
+        retryOverviewBtn.addEventListener("click", () => {
           this.fetchQueues();
         });
       }
+
+      // Overview table "View DLQ" badges
+      const dlqLinks = document.querySelectorAll(".view-dlq-link");
+      dlqLinks.forEach((link) => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          const queueName = link.getAttribute("data-queue");
+          if (queueName) {
+            this.navigate("dlq", { queue: queueName });
+          }
+        });
+      });
+
+      // DLQ Explorer Queue Select
+      const queueSelect = document.getElementById("dlq-queue-select");
+      if (queueSelect) {
+        queueSelect.addEventListener("change", (e) => {
+          const val = e.target.value.trim();
+          this.state.dlq.selectedQueue = val || null;
+          this.state.dlq.start = 0;
+          this.state.dlq.expandedJobIndex = null;
+          if (typeof window !== "undefined" && window.location) {
+            window.location.hash = this.state.dlq.selectedQueue
+              ? `#/dlq?queue=${encodeURIComponent(this.state.dlq.selectedQueue)}`
+              : "#/dlq";
+          }
+          if (this.state.dlq.selectedQueue) {
+            this.fetchDLQ();
+          } else {
+            this.renderView();
+          }
+        });
+      }
+
+      // DLQ Explorer Order Select
+      const orderSelect = document.getElementById("dlq-order-select");
+      if (orderSelect) {
+        orderSelect.addEventListener("change", (e) => {
+          this.state.dlq.order = e.target.value;
+          this.state.dlq.start = 0;
+          this.state.dlq.expandedJobIndex = null;
+          this.fetchDLQ();
+        });
+      }
+
+      // DLQ Explorer Limit Select
+      const limitSelect = document.getElementById("dlq-limit-select");
+      if (limitSelect) {
+        limitSelect.addEventListener("change", (e) => {
+          this.state.dlq.limit = parseInt(e.target.value, 10) || 50;
+          this.state.dlq.start = 0;
+          this.state.dlq.expandedJobIndex = null;
+          this.fetchDLQ();
+        });
+      }
+
+      // DLQ Explorer Refresh Button
+      const dlqRefreshBtn = document.getElementById("dlq-refresh-btn");
+      if (dlqRefreshBtn) {
+        dlqRefreshBtn.addEventListener("click", () => {
+          this.fetchDLQ();
+        });
+      }
+
+      // DLQ Explorer Retry Button
+      const dlqRetryBtn = document.getElementById("dlq-retry-btn");
+      if (dlqRetryBtn) {
+        dlqRetryBtn.addEventListener("click", () => {
+          this.fetchDLQ();
+        });
+      }
+
+      // DLQ Explorer Previous Page Button
+      const dlqPrevBtn = document.getElementById("dlq-prev-btn");
+      if (dlqPrevBtn) {
+        dlqPrevBtn.addEventListener("click", () => {
+          if (this.state.dlq.start > 0) {
+            this.state.dlq.start = Math.max(0, this.state.dlq.start - this.state.dlq.limit);
+            this.state.dlq.expandedJobIndex = null;
+            this.fetchDLQ();
+          }
+        });
+      }
+
+      // DLQ Explorer Next Page Button
+      const dlqNextBtn = document.getElementById("dlq-next-btn");
+      if (dlqNextBtn) {
+        dlqNextBtn.addEventListener("click", () => {
+          this.state.dlq.start = this.state.dlq.start + this.state.dlq.limit;
+          this.state.dlq.expandedJobIndex = null;
+          this.fetchDLQ();
+        });
+      }
+
+      // DLQ Explorer Job Detail Toggle Buttons
+      const inspectBtns = document.querySelectorAll(".dlq-inspect-btn");
+      inspectBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idxStr = btn.getAttribute("data-job-index");
+          const idx = parseInt(idxStr, 10);
+          if (!Number.isNaN(idx)) {
+            this.state.dlq.expandedJobIndex = this.state.dlq.expandedJobIndex === idx ? null : idx;
+            this.renderView();
+          }
+        });
+      });
     }
 
     /**
@@ -287,7 +518,46 @@
       if (refreshBtn) {
         refreshBtn.addEventListener("click", () => {
           this.fetchQueues();
+          if (this.state.activeView === "dlq" && this.state.dlq.selectedQueue) {
+            this.fetchDLQ();
+          }
         });
+      }
+    }
+
+    /**
+     * Parses and handles browser URL hash navigation (e.g. #/dlq?queue=emails or #/job).
+     */
+    handleHashChange() {
+      if (typeof window === "undefined" || !window.location.hash) return;
+
+      const raw = window.location.hash.replace(/^#\/?/, "");
+      let view = raw;
+      let queueParam = null;
+
+      if (raw.startsWith("dlq/")) {
+        view = "dlq";
+        queueParam = decodeURIComponent(raw.slice(4));
+      } else if (raw.includes("?")) {
+        const [viewPart, queryPart] = raw.split("?");
+        view = viewPart;
+        try {
+          const params = new URLSearchParams(queryPart);
+          queueParam = params.get("queue");
+        } catch {
+          // ignore malformed query
+        }
+      }
+
+      if (view && this.viewTitles[view]) {
+        // Avoid redundant navigations if view and queue already match current state
+        if (
+          this.state.activeView === view &&
+          (view !== "dlq" || !queueParam || this.state.dlq.selectedQueue === queueParam)
+        ) {
+          return;
+        }
+        this.navigate(view, { queue: queueParam });
       }
     }
 
@@ -298,10 +568,7 @@
       if (typeof window === "undefined") return;
 
       window.addEventListener("hashchange", () => {
-        const route = window.location.hash.replace(/^#\/?/, "");
-        if (route && this.viewTitles[route] && route !== this.state.activeView) {
-          this.navigate(route);
-        }
+        this.handleHashChange();
       });
     }
   }

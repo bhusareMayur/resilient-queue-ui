@@ -91,7 +91,7 @@ function renderOverviewData(queues) {
         : `<span class="badge badge-active" aria-label="Status: Active">Active</span>`;
 
       const dlqBadge = dlq > 0
-        ? `<span class="badge badge-dlq-alert" aria-label="${dlq} failed jobs in DLQ">${dlq}</span>`
+        ? `<a href="#dlq" class="badge badge-dlq-alert view-dlq-link" data-queue="${escapeHtml(name)}" aria-label="View ${dlq} failed jobs in DLQ for queue ${escapeHtml(name)}">${dlq}</a>`
         : `<span class="metric-number badge-dlq-clean">0</span>`;
 
       return `
