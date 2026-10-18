@@ -447,6 +447,19 @@ button {
   color: var(--status-error);
   font-family: var(--font-mono);
   font-weight: 700;
+  text-decoration: none;
+}
+
+.view-dlq-link {
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.view-dlq-link:hover,
+.view-dlq-link:focus-visible {
+  opacity: 0.85;
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 1px;
 }
 
 /* UI State Containers */
@@ -771,5 +784,28 @@ button {
 
   .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .dlq-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .form-group {
+    justify-content: space-between;
+  }
+
+  .form-group .form-select {
+    flex: 1;
+    max-width: 220px;
+  }
+
+  .dlq-toolbar > div:last-child {
+    margin-left: 0 !important;
+  }
+
+  .dlq-toolbar > div:last-child button {
+    width: 100%;
   }
 }

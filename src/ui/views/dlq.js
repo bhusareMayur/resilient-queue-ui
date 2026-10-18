@@ -29,6 +29,7 @@ function formatTimestamp(ts) {
   }
   try {
     const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return "-";
     return d.toLocaleString(undefined, {
       year: "numeric",
       month: "short",
@@ -38,7 +39,7 @@ function formatTimestamp(ts) {
       second: "2-digit"
     });
   } catch {
-    return String(ts);
+    return "-";
   }
 }
 
@@ -135,6 +136,9 @@ function renderJobDetail(job, isCorrupted) {
   let dataFormatted = "null";
   try {
     dataFormatted = job?.data !== undefined ? JSON.stringify(job.data, null, 2) : "null";
+    if (dataFormatted === undefined) {
+      dataFormatted = "undefined";
+    }
   } catch {
     dataFormatted = String(job?.data);
   }
@@ -198,7 +202,7 @@ function renderDLQTable(state) {
   const { jobs = [], total = 0, start = 0, limit = 50, order = "desc", expandedJobIndex = null } = state;
 
   const rows = jobs.map((job, index) => {
-    const isCorrupted = Boolean(job?.corrupted || job?.id === null);
+    const isCorrupted = Boolean(!job || typeof job !== "object" || job.corrupted || job.id == null);
     const isExpanded = expandedJobIndex === index;
 
     let idHtml = "";
@@ -215,7 +219,8 @@ function renderDLQTable(state) {
       idHtml = `<span class="font-mono text-primary" title="${escapeHtml(job?.id)}">${escapeHtml(job?.id)}</span>`;
       reasonHtml = `<span class="failure-reason-text" title="${escapeHtml(job?.failureReason)}">${escapeHtml(job?.failureReason || "-")}</span>`;
       const stalls = typeof job?.stalledCount === "number" && job.stalledCount > 0 ? ` (${job.stalledCount} stalls)` : "";
-      attemptsHtml = `<span class="metric-number">${job?.attempt || 1}${stalls}</span>`;
+      const attempts = typeof job?.attempt === "number" ? job.attempt : "-";
+      attemptsHtml = `<span class="metric-number">${attempts}${stalls}</span>`;
       failedAtHtml = `<span class="font-mono text-muted">${formatTimestamp(job?.failedAt)}</span>`;
     }
 
@@ -253,13 +258,17 @@ function renderDLQTable(state) {
     `;
   }).join("");
 
-  const totalPages = Math.max(1, Math.ceil(total / limit));
-  const currentPage = Math.floor(start / limit) + 1;
-  const startItem = total === 0 ? 0 : start + 1;
-  const endItem = Math.min(start + jobs.length, total);
+  const safeTotal = typeof total === "number" && Number.isFinite(total) && total >= 0 ? total : jobs.length;
+  const safeLimit = Math.max(1, parseInt(limit, 10) || 50);
+  const safeStart = Math.max(0, parseInt(start, 10) || 0);
 
-  const prevDisabled = start <= 0;
-  const nextDisabled = start + limit >= total || jobs.length < limit;
+  const totalPages = Math.max(1, Math.ceil(safeTotal / safeLimit));
+  const currentPage = Math.floor(safeStart / safeLimit) + 1;
+  const startItem = safeTotal === 0 ? 0 : Math.min(safeStart + 1, safeTotal);
+  const endItem = Math.min(safeStart + jobs.length, safeTotal);
+
+  const prevDisabled = safeStart <= 0;
+  const nextDisabled = safeStart + safeLimit >= safeTotal || jobs.length < safeLimit;
 
   return `
     <div class="table-card">
@@ -327,7 +336,8 @@ function renderDLQView(dlqState = {}, queues = []) {
   const limit = dlqState.limit || 50;
 
   // Build queue options
-  const queueOptions = queues
+  const isSelectedInQueues = queues.some((q) => q?.name === selectedQueue);
+  let queueOptions = queues
     .map((q) => {
       const name = q?.name || "unknown";
       const count = q?.metrics?.dlq || 0;
@@ -335,6 +345,10 @@ function renderDLQView(dlqState = {}, queues = []) {
       return `<option value="${escapeHtml(name)}" ${isSelected ? "selected" : ""}>${escapeHtml(name)} (DLQ: ${count})</option>`;
     })
     .join("");
+
+  if (selectedQueue && !isSelectedInQueues) {
+    queueOptions = `<option value="${escapeHtml(selectedQueue)}" selected>${escapeHtml(selectedQueue)} (Not in registry)</option>` + queueOptions;
+  }
 
   const toolbarHtml = `
     <section class="dlq-toolbar" aria-label="DLQ Explorer Controls">
