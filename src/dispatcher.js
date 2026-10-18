@@ -3,6 +3,7 @@
 const { QueueRegistry, createQueueRegistry } = require("./registry");
 const { handleGetMetrics } = require("./handlers/metrics");
 const { handleGetDLQ } = require("./handlers/dlq");
+const { handleGetJob, serializeJob } = require("./handlers/job");
 
 /**
  * Creates the standard JSON error response envelope.
@@ -383,6 +384,144 @@ class DashboardDispatcher {
   }
 
   /**
+   * Executes the GET /api/queues/:queueName/jobs/:jobId route logic.
+   *
+   * @param {string} rawQueueName Queue identifier path parameter
+   * @param {string} rawJobId Job identifier path parameter
+   * @returns {Promise<{ status: number, body: object }>}
+   */
+  async executeJobRoute(rawQueueName, rawJobId) {
+    if (
+      rawQueueName === undefined ||
+      rawQueueName === null ||
+      typeof rawQueueName !== "string"
+    ) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "queueName must be a non-empty string"
+        )
+      };
+    }
+
+    let queueName;
+    try {
+      queueName = decodeURIComponent(rawQueueName);
+    } catch {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "Invalid URL-encoded queueName parameter"
+        )
+      };
+    }
+
+    const trimmedQueueName = queueName.trim();
+    if (trimmedQueueName.length === 0) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "queueName must be a non-empty string"
+        )
+      };
+    }
+
+    if (
+      rawJobId === undefined ||
+      rawJobId === null ||
+      typeof rawJobId !== "string"
+    ) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "jobId must be a non-empty string"
+        )
+      };
+    }
+
+    let jobId;
+    try {
+      jobId = decodeURIComponent(rawJobId);
+    } catch {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "Invalid URL-encoded jobId parameter"
+        )
+      };
+    }
+
+    const trimmedJobId = jobId.trim();
+    if (trimmedJobId.length === 0) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "jobId must be a non-empty string"
+        )
+      };
+    }
+
+    const queue = this.registry.get(trimmedQueueName);
+    if (!queue) {
+      return {
+        status: 404,
+        body: createErrorResponse(
+          "QUEUE_NOT_FOUND",
+          `Queue '${trimmedQueueName}' is not registered with the dashboard adapter`
+        )
+      };
+    }
+
+    try {
+      const job = await handleGetJob(queue, trimmedJobId);
+      if (!job) {
+        return {
+          status: 404,
+          body: createErrorResponse(
+            "JOB_NOT_FOUND",
+            `Job '${trimmedJobId}' not found or expired under retention policy`
+          )
+        };
+      }
+
+      return {
+        status: 200,
+        body: {
+          queue: trimmedQueueName,
+          job
+        }
+      };
+    } catch (err) {
+      if (
+        err &&
+        (err.code === "QUEUE_CLOSED" ||
+          err.statusCode === 503 ||
+          (typeof err.message === "string" &&
+            /queue is closed/i.test(err.message)))
+      ) {
+        return {
+          status: 503,
+          body: createErrorResponse("QUEUE_CLOSED", "Queue is closed")
+        };
+      }
+
+      return {
+        status: 500,
+        body: createErrorResponse(
+          "INTERNAL_ERROR",
+          err?.message || "Internal server error"
+        )
+      };
+    }
+  }
+
+  /**
    * Dispatches an incoming HTTP request (Express / Connect / native Node http).
    *
    * @param {object} req
@@ -410,8 +549,9 @@ class DashboardDispatcher {
 
     const metricsMatch = pathname.match(/^\/api\/queues\/([^/]*)\/metrics\/?$/);
     const dlqMatch = pathname.match(/^\/api\/queues\/([^/]*)\/dlq\/?$/);
+    const jobMatch = pathname.match(/^\/api\/queues\/([^/]*)\/jobs\/([^/]*)\/?$/);
 
-    if (!metricsMatch && !dlqMatch) {
+    if (!metricsMatch && !dlqMatch && !jobMatch) {
       if (typeof next === "function") {
         return next();
       }
@@ -454,6 +594,13 @@ class DashboardDispatcher {
         const result = await this.executeDLQRoute(rawQueueName, query || {});
         return sendJson(res, result.status, result.body);
       }
+
+      if (jobMatch) {
+        const rawQueueName = jobMatch[1];
+        const rawJobId = jobMatch[2];
+        const result = await this.executeJobRoute(rawQueueName, rawJobId);
+        return sendJson(res, result.status, result.body);
+      }
     } catch (err) {
       sendJson(
         res,
@@ -476,5 +623,6 @@ module.exports = {
   createDashboardDispatcher,
   createErrorResponse,
   parseDLQQueryParams,
-  sendJson
+  sendJson,
+  serializeJob
 };

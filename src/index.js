@@ -8,6 +8,7 @@
 const { QueueRegistry, createQueueRegistry } = require("./registry");
 const { handleGetMetrics } = require("./handlers/metrics");
 const { handleGetDLQ } = require("./handlers/dlq");
+const { handleGetJob, serializeJob } = require("./handlers/job");
 const {
   DashboardDispatcher,
   createDashboardDispatcher,
@@ -25,6 +26,8 @@ module.exports = {
   createQueueRegistry,
   handleGetMetrics,
   handleGetDLQ,
+  handleGetJob,
+  serializeJob,
   DashboardDispatcher,
   createDashboardDispatcher,
   createExpressAdapter,

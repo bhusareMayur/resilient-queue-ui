@@ -169,7 +169,41 @@ describe("Live ResilientQueue Integration", () => {
     assert.equal(data.jobs[1].raw, "corrupted_payload_without_json{");
   });
 
-  it("should return 503 QUEUE_CLOSED after queue is closed for both metrics and DLQ", async (t) => {
+  it("should inspect an enqueued job from live Redis and omit functions", async (t) => {
+    if (!redisAvailable) return t.skip();
+
+    const jobId = await queue.enqueue(
+      { task: "send-invoice", amount: 150 },
+      { idempotencyKey: "invoice-999" }
+    );
+
+    const res = await fetch(`${serverUrl}/api/queues/live-test/jobs/${jobId}`);
+    assert.equal(res.status, 200);
+
+    const data = await res.json();
+    assert.equal(data.queue, "live-test");
+    assert.equal(data.job.id, jobId);
+    assert.equal(data.job.state, "waiting");
+    assert.deepEqual(data.job.data, { task: "send-invoice", amount: 150 });
+    assert.equal(data.job.idempotencyKey, "invoice-999");
+    assert.equal("updateProgress" in data.job, false);
+  });
+
+  it("should return 404 JOB_NOT_FOUND when inspecting non-existent job in live Redis", async (t) => {
+    if (!redisAvailable) return t.skip();
+
+    const res = await fetch(`${serverUrl}/api/queues/live-test/jobs/missing-live-job-404`);
+    assert.equal(res.status, 404);
+
+    const data = await res.json();
+    assert.equal(data.error.code, "JOB_NOT_FOUND");
+    assert.equal(
+      data.error.message,
+      "Job 'missing-live-job-404' not found or expired under retention policy"
+    );
+  });
+
+  it("should return 503 QUEUE_CLOSED after queue is closed for metrics, DLQ, and job inspection", async (t) => {
     if (!redisAvailable) return t.skip();
 
     await queue.close();
@@ -183,5 +217,10 @@ describe("Live ResilientQueue Integration", () => {
     assert.equal(resDLQ.status, 503);
     const dataDLQ = await resDLQ.json();
     assert.equal(dataDLQ.error.code, "QUEUE_CLOSED");
+
+    const resJob = await fetch(`${serverUrl}/api/queues/live-test/jobs/any-id`);
+    assert.equal(resJob.status, 503);
+    const dataJob = await resJob.json();
+    assert.equal(dataJob.error.code, "QUEUE_CLOSED");
   });
 });
