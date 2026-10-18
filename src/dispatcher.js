@@ -1,10 +1,124 @@
 "use strict";
 
+const path = require("node:path");
+const fs = require("node:fs");
+
 const { QueueRegistry, createQueueRegistry } = require("./registry");
 const { handleGetMetrics } = require("./handlers/metrics");
 const { handleGetDLQ } = require("./handlers/dlq");
 const { handleGetJob, serializeJob } = require("./handlers/job");
 const { handleGetQueues } = require("./handlers/queues");
+
+const UI_DIR = path.resolve(__dirname, "ui");
+
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon"
+};
+
+/**
+ * Resolves safe absolute path to UI assets inside UI_DIR.
+ * Prevents directory traversal, encoded path bypasses, and prefix collisions.
+ *
+ * @param {string} relPath Path requested by client
+ * @returns {{ fullPath: string, contentType: string } | null}
+ */
+function resolveUiAssetPath(relPath) {
+  if (typeof relPath !== "string") {
+    return null;
+  }
+
+  let decoded;
+  try {
+    decoded = decodeURIComponent(relPath);
+  } catch {
+    return null;
+  }
+
+  if (decoded.includes("\0")) {
+    return null;
+  }
+
+  let clean = decoded.replace(/^\/ui\/?$/, "/index.html").replace(/^\/ui\//, "/").replace(/^\/+/, "");
+  if (!clean || clean === "index.html") {
+    clean = "index.html";
+  }
+
+  const fullPath = path.resolve(UI_DIR, clean);
+  const rel = path.relative(UI_DIR, fullPath);
+
+  // Traversal safeguard: relative path must not start with '..' and must not be absolute
+  if (rel.startsWith("..") || path.isAbsolute(rel) || fullPath === UI_DIR) {
+    return null;
+  }
+
+  // Ensure resolved path is strictly within UI_DIR directory hierarchy
+  if (!fullPath.startsWith(UI_DIR + path.sep)) {
+    return null;
+  }
+
+  try {
+    if (fs.existsSync(fullPath)) {
+      const stat = fs.statSync(fullPath);
+      if (stat.isFile()) {
+        const ext = path.extname(fullPath).toLowerCase();
+        return {
+          fullPath,
+          contentType: MIME_TYPES[ext] || "application/octet-stream"
+        };
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Sends a static file response across Express, Connect, or native Node http.
+ *
+ * @param {object} res Response object
+ * @param {string} filePath Path to asset
+ * @param {string} contentType MIME type
+ */
+function sendStaticFile(res, filePath, contentType) {
+  try {
+    const content = fs.readFileSync(filePath);
+    if (typeof res.type === "function") {
+      res.type(contentType);
+    } else if (typeof res.setHeader === "function") {
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Length", Buffer.byteLength(content));
+      res.setHeader("Cache-Control", "public, max-age=300");
+    }
+
+    if (typeof res.status === "function") {
+      res.status(200);
+    } else if (typeof res.code === "function") {
+      res.code(200);
+    } else {
+      res.statusCode = 200;
+    }
+
+    if (typeof res.send === "function") {
+      return res.send(content);
+    }
+    if (typeof res.end === "function") {
+      return res.end(content);
+    }
+  } catch {
+    sendJson(
+      res,
+      500,
+      createErrorResponse("INTERNAL_ERROR", "Failed to load UI asset")
+    );
+  }
+}
 
 /**
  * Creates the standard JSON error response envelope.
@@ -592,7 +706,14 @@ class DashboardDispatcher {
     const dlqMatch = pathname.match(/^\/api\/queues\/([^/]*)\/dlq\/?$/);
     const jobMatch = pathname.match(/^\/api\/queues\/([^/]*)\/jobs\/([^/]*)\/?$/);
 
-    if (!queuesMatch && !metricsMatch && !dlqMatch && !jobMatch) {
+    const isApiRoute = Boolean(queuesMatch || metricsMatch || dlqMatch || jobMatch);
+
+    let uiAsset = null;
+    if (!isApiRoute && req.method === "GET") {
+      uiAsset = resolveUiAssetPath(pathname);
+    }
+
+    if (!isApiRoute && !uiAsset) {
       if (typeof next === "function") {
         return next();
       }
@@ -601,6 +722,10 @@ class DashboardDispatcher {
         404,
         createErrorResponse("ROUTE_NOT_FOUND", "Route not found")
       );
+    }
+
+    if (uiAsset) {
+      return sendStaticFile(res, uiAsset.fullPath, uiAsset.contentType);
     }
 
     if (req.method !== "GET") {
@@ -671,5 +796,8 @@ module.exports = {
   handleGetQueues,
   parseDLQQueryParams,
   sendJson,
-  serializeJob
+  serializeJob,
+  resolveUiAssetPath,
+  sendStaticFile,
+  UI_DIR
 };

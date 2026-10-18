@@ -97,6 +97,67 @@ fastify.listen({ port: 3000 });
 
 ---
 
+## Dashboard UI & Frontend Architecture (Milestone 5)
+
+The package includes a built-in, lightweight administration dashboard served directly by the Express and Fastify adapters:
+
+- **Clean, Responsive Layout**: Includes a sidebar navigation area and responsive drawer for mobile devices.
+- **Views**:
+  - **Queue Overview**: Consumes `GET /api/queues` with real-time aggregate telemetry cards, paused/active badges, and queue metrics table.
+  - **Dead Letter Queue (DLQ)**: Foundation view ready for Milestone 6 DLQ explorer.
+  - **Job Diagnostics**: Foundation placeholder for inspecting job states, progress, timestamps, and payloads.
+- **Robust UI States**: Handles loading spinners, empty states (with configuration snippet), and API error states with an interactive "Retry" action.
+- **Zero External Frontend Dependencies**: Pure semantic HTML5, modern CSS3 with CSS variables, and modular vanilla JavaScript.
+
+### Reusable Frontend API Client
+
+You can use the frontend API client directly in Node.js, bundlers, or the browser:
+
+```javascript
+const { ApiClient, ApiError } = require("@mayurbhusare/resilient-queue-ui");
+
+const client = new ApiClient({
+  baseUrl: "http://localhost:3000/admin/queues"
+});
+
+// Fetch all registered queues and metrics
+const { queues } = await client.getQueues();
+
+// Fetch metrics for a specific queue
+const metrics = await client.getQueueMetrics("emails");
+
+// Fetch DLQ entries with pagination
+const dlq = await client.getQueueDLQ("emails", { start: 0, limit: 25, order: "desc" });
+
+// Fetch individual job
+const job = await client.getJob("emails", "job-123");
+```
+
+### Core Compatibility Requirement
+
+> [!NOTE]
+> The published `@mayurbhusare/resilient-queue@2.0.2` release does not expose the `getJob()` public method. Direct individual job inspection is unavailable when paired with `v2.0.2` and will be activated once a compatible core release is installed. The UI displays an appropriate unavailable placeholder notice.
+
+---
+
+## Testing & Development
+
+Run the complete test suite:
+
+```bash
+# Run all tests (unit, integration, and frontend)
+npm test
+
+# Run frontend tests (ApiClient and UI views)
+npm run test:frontend
+
+# Run unit tests
+npm run test:unit
+
+# Run adapter integration tests
+npm run test:integration
+```
+
 ## Security Considerations
 
 > [!CAUTION]
@@ -124,4 +185,4 @@ The REST API contract powering the dashboard is detailed in [docs/api-contract.m
 
 ## License
 
-[MIT](./LICENSE) &copy; 2026 Mayur S. Bhusare
+[MIT](./LICENSE) &copy; 2026 Resilient Queue.

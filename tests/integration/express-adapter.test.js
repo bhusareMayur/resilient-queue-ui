@@ -436,4 +436,20 @@ describe("Express Adapter with multiple queues (GET /api/queues)", () => {
       }
     ]);
   });
+
+  it("should serve index.html on root GET /", async () => {
+    const res = await fetch(`${serverUrl}/`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /text\/html/);
+    const text = await res.text();
+    assert.match(text, /ResilientQueue Dashboard/);
+  });
+
+  it("should serve styles.css on GET /styles.css", async () => {
+    const res = await fetch(`${serverUrl}/styles.css`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type"), /text\/css/);
+    const text = await res.text();
+    assert.match(text, /--sidebar-width/);
+  });
 });
