@@ -1039,4 +1039,710 @@ describe("UI Components & Views", () => {
       assert.match(sentContent.toString(), /ResilientQueue Dashboard/);
     });
   });
+
+  describe("Milestone 8: Queue Activity & Monitoring", () => {
+    describe("Live Queue Monitoring & Metric Distinction", () => {
+      it("should clearly distinguish numeric zero from unavailable metrics", () => {
+        const queues = [
+          {
+            name: "zero-queue",
+            isPaused: false,
+            metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 }
+          },
+          {
+            name: "unavailable-queue",
+            isPaused: false,
+            metrics: { waiting: null, active: undefined, delayed: NaN, dlq: null }
+          }
+        ];
+
+        const html = OverviewView.renderData(queues);
+
+        // Zero queue has clear '0' counts
+        assert.match(html, /zero-queue/);
+        assert.match(html, /<td class="metric-number">0<\/td>/);
+        assert.match(html, /class="metric-number badge-dlq-clean">0<\/span>/);
+
+        // Unavailable queue renders '—' with .metric-unavailable class
+        assert.match(html, /unavailable-queue/);
+        assert.match(html, /<span class="metric-unavailable" title="Waiting unavailable">—<\/span>/);
+        assert.match(html, /<span class="metric-unavailable" title="Active unavailable">—<\/span>/);
+        assert.match(html, /<span class="metric-unavailable" title="Delayed unavailable">—<\/span>/);
+        assert.match(html, /<span class="metric-unavailable" title="DLQ count unavailable">—<\/span>/);
+      });
+
+      it("should clearly distinguish closed queues and display Closed badge with unavailable metrics", () => {
+        const queues = [
+          {
+            name: "closed-queue-1",
+            isClosed: true,
+            metrics: null
+          },
+          {
+            name: "closed-queue-2",
+            status: "closed",
+            metrics: null
+          }
+        ];
+
+        const html = OverviewView.renderData(queues);
+        assert.match(html, /badge-closed/);
+        assert.match(html, /Status: Closed/);
+        assert.match(html, /closed-queue-1/);
+        assert.match(html, /closed-queue-2/);
+      });
+
+      it("should clearly distinguish queue request failures and display Error badge", () => {
+        const queues = [
+          {
+            name: "failing-queue",
+            status: "error",
+            error: { message: "Redis timeout" },
+            metrics: null
+          }
+        ];
+
+        const html = OverviewView.renderData(queues);
+        assert.match(html, /badge-error/);
+        assert.match(html, /Status: Error/);
+        assert.match(html, /failing-queue/);
+      });
+
+      it("should handle completely missing or null metrics objects gracefully", () => {
+        const queues = [
+          {
+            name: "no-metrics-queue",
+            isPaused: false,
+            metrics: null
+          }
+        ];
+
+        const html = OverviewView.renderData(queues);
+        assert.match(html, /no-metrics-queue/);
+        assert.match(html, /badge-unavailable/);
+        assert.match(html, /Status: Unavailable/);
+        assert.match(html, /metric-unavailable/);
+      });
+    });
+
+    describe("Queue Health Indicators & Last Update Timestamp", () => {
+      it("should derive status only from API data and never claim healthy based solely on zero counts", () => {
+        const zeroQueue = {
+          name: "idle-queue",
+          isPaused: false,
+          metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 }
+        };
+
+        const badge = OverviewView.renderStatusBadge(zeroQueue);
+        // Must be Active/Paused/Closed/Unavailable/Error, NEVER "Healthy"
+        assert.doesNotMatch(badge, /healthy/i);
+        assert.match(badge, /badge-active/);
+        assert.match(badge, /Active/);
+
+        const pausedZeroQueue = {
+          name: "paused-idle-queue",
+          isPaused: true,
+          metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 }
+        };
+        const pausedBadge = OverviewView.renderStatusBadge(pausedZeroQueue);
+        assert.doesNotMatch(pausedBadge, /healthy/i);
+        assert.match(pausedBadge, /badge-paused/);
+        assert.match(pausedBadge, /Paused/);
+      });
+
+      it("should treat missing or undefined metrics property as Unavailable", () => {
+        const noMetricsQueue = {
+          name: "undefined-metrics-queue"
+        };
+        const badge = OverviewView.renderStatusBadge(noMetricsQueue);
+        assert.match(badge, /badge-unavailable/);
+        assert.match(badge, /Unavailable/);
+      });
+
+      it("should show last successful update time in table and header", () => {
+        const testDate = new Date("2026-10-19T10:00:00.000Z");
+        const queues = [
+          {
+            name: "sync-queue",
+            isPaused: false,
+            metrics: { waiting: 5, active: 1, delayed: 0, dlq: 0 },
+            lastUpdated: testDate
+          }
+        ];
+
+        const html = OverviewView.renderData(queues, { lastUpdated: testDate });
+        assert.match(html, /class="last-updated-cell"/);
+        assert.match(html, /2026-10-19T10:00:00\.000Z/);
+        assert.match(html, /class="last-sync-label"/);
+        assert.match(html, /Last updated:/);
+      });
+
+      it("should show fallback dash when lastUpdated is missing", () => {
+        const queues = [
+          {
+            name: "no-time-queue",
+            isPaused: false,
+            metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 }
+          }
+        ];
+
+        const html = OverviewView.renderData(queues);
+        assert.match(html, /<td class="last-updated-cell text-muted">—<\/td>/);
+      });
+    });
+
+    describe("Auto-Refresh, Polling Cleanup, Overlap Prevention & Stale Responses", () => {
+      it("should support configurable polling interval and timer control", () => {
+        const app = new DashboardApp({ pollInterval: 3000 });
+        assert.equal(app.pollInterval, 3000);
+
+        app.setPollInterval(10000);
+        assert.equal(app.pollInterval, 10000);
+
+        app.setPollInterval(0);
+        assert.equal(app.pollInterval, 0);
+        assert.equal(app._isPolling, false);
+        assert.equal(app._pollTimer, null);
+
+        app.destroy();
+      });
+
+      it("should disable auto-refresh when autoRefresh: false option is passed", () => {
+        const app = new DashboardApp({ autoRefresh: false });
+        assert.equal(app.pollInterval, 0);
+        assert.equal(app._isPolling, false);
+        app.destroy();
+      });
+
+      it("should clean up timers when navigating away from overview", () => {
+        const app = new DashboardApp({ pollInterval: 2000 });
+        app.startPolling();
+        assert.equal(app._isPolling, true);
+        assert.ok(app._pollTimer !== null);
+
+        // Navigating away from overview to DLQ must clean up timer
+        app.navigate("dlq");
+        assert.equal(app._isPolling, false);
+        assert.equal(app._pollTimer, null);
+
+        // Navigating back to overview should resume polling
+        app.navigate("overview");
+        assert.equal(app._isPolling, true);
+        assert.ok(app._pollTimer !== null);
+
+        // Navigating to job inspection must also clean up timer
+        app.navigate("job");
+        assert.equal(app._isPolling, false);
+        assert.equal(app._pollTimer, null);
+
+        app.destroy();
+        assert.equal(app._pollTimer, null);
+      });
+
+      it("should never start or maintain timers outside overview view", () => {
+        const app = new DashboardApp({ pollInterval: 1000 });
+        app.state.activeView = "dlq";
+
+        // Calling startPolling while on DLQ view must immediately stop and not create a timer
+        app.startPolling();
+        assert.equal(app._isPolling, false);
+        assert.equal(app._pollTimer, null);
+
+        // Calling setPollInterval while on DLQ view must not start polling
+        app.setPollInterval(2000);
+        assert.equal(app._isPolling, false);
+        assert.equal(app._pollTimer, null);
+
+        // Switch to job view and try startPolling again
+        app.state.activeView = "job";
+        app.startPolling();
+        assert.equal(app._isPolling, false);
+        assert.equal(app._pollTimer, null);
+
+        app.destroy();
+      });
+
+      it("should never multiply timers on repeated calls to startPolling, setPollInterval, or navigate", () => {
+        const app = new DashboardApp({ pollInterval: 5000 });
+
+        // Repeated startPolling calls
+        app.startPolling();
+        const timer1 = app._pollTimer;
+        app.startPolling();
+        const timer2 = app._pollTimer;
+        app.startPolling();
+        const timer3 = app._pollTimer;
+
+        assert.ok(timer1 !== null);
+        assert.ok(timer2 !== null);
+        assert.ok(timer3 !== null);
+        // Only one active timer should exist at any given time
+        assert.equal(app._isPolling, true);
+
+        // Repeated setPollInterval calls
+        app.setPollInterval(3000);
+        app.setPollInterval(4000);
+        app.setPollInterval(5000);
+        assert.equal(app._isPolling, true);
+        assert.ok(app._pollTimer !== null);
+
+        // Repeated navigate('overview') calls
+        app.navigate("overview");
+        app.navigate("overview");
+        app.navigate("overview");
+        assert.equal(app._isPolling, true);
+        assert.ok(app._pollTimer !== null);
+
+        app.destroy();
+        assert.equal(app._pollTimer, null);
+      });
+
+      it("should update lastUpdated timestamp ONLY after successful responses and never on failure", async () => {
+        let shouldFail = false;
+        const mockApiClient = {
+          getQueues: async () => {
+            if (shouldFail) {
+              throw new Error("Temporary Redis error");
+            }
+            return { queues: [{ name: "test-queue", metrics: { waiting: 0 } }] };
+          }
+        };
+
+        const app = new DashboardApp({ apiClient: mockApiClient });
+
+        // Initial success
+        await app.fetchQueues();
+        assert.ok(app.state.lastUpdated instanceof Date);
+        const firstSuccessTimestamp = app.state.lastUpdated.getTime();
+
+        // Failed request
+        shouldFail = true;
+        await app.fetchQueues();
+        assert.equal(app.state.lastUpdated.getTime(), firstSuccessTimestamp); // Preserved!
+
+        // Another failed request
+        await app.fetchQueues();
+        assert.equal(app.state.lastUpdated.getTime(), firstSuccessTimestamp); // Still preserved!
+
+        // Subsequent success after slight delay
+        shouldFail = false;
+        await new Promise((r) => setTimeout(r, 10));
+        await app.fetchQueues();
+        assert.ok(app.state.lastUpdated.getTime() > firstSuccessTimestamp); // Successfully updated!
+
+        app.destroy();
+      });
+
+      it("should not re-render view on auto-refresh completion if user navigated away", async () => {
+        let resolveInFlight;
+        const inFlightPromise = new Promise((resolve) => {
+          resolveInFlight = resolve;
+        });
+
+        const mockApiClient = {
+          getQueues: async () => {
+            await inFlightPromise;
+            return { queues: [{ name: "emails", metrics: { waiting: 10 } }] };
+          }
+        };
+
+        const app = new DashboardApp({ apiClient: mockApiClient });
+        let renderViewCallsOnDlq = 0;
+
+        // Start background auto-refresh on overview
+        const p1 = app.fetchQueues({ isAutoRefresh: true });
+
+        // User navigates away to DLQ view while fetch is in-flight
+        app.state.activeView = "dlq";
+        app.renderView = () => {
+          if (app.state.activeView === "dlq") {
+            renderViewCallsOnDlq++;
+          }
+        };
+
+        // Complete the in-flight auto-refresh
+        resolveInFlight();
+        await p1;
+
+        // Should not have re-rendered the DLQ view
+        assert.equal(renderViewCallsOnDlq, 0);
+        app.destroy();
+      });
+
+      it("should prevent overlapping requests during polling", async () => {
+        let fetchCount = 0;
+        let resolveInFlight;
+        const slowPromise = new Promise((resolve) => {
+          resolveInFlight = resolve;
+        });
+
+        const mockApiClient = {
+          getQueues: async () => {
+            fetchCount++;
+            if (fetchCount === 1) {
+              await slowPromise;
+            }
+            return { queues: [{ name: "emails", metrics: { waiting: 1 } }] };
+          }
+        };
+
+        const app = new DashboardApp({ apiClient: mockApiClient, pollInterval: 100 });
+        app.startPolling();
+
+        // Start first fetch (which stays in flight)
+        const p1 = app.fetchQueues();
+        assert.equal(fetchCount, 1);
+        assert.equal(app._isFetchingQueues, true);
+
+        // A poll tick triggered while fetch 1 is in-flight must not start an overlapping fetch
+        await app._pollTick();
+        assert.equal(fetchCount, 1); // Still 1! No overlapping request initiated
+
+        // A manual fetchQueues with preventOverlap=true must reuse the in-flight promise
+        const p2 = app.fetchQueues({ preventOverlap: true });
+        assert.equal(fetchCount, 1); // Still 1!
+        assert.equal(p2, app._currentQueuesPromise);
+
+        // Complete the in-flight fetch
+        resolveInFlight();
+        await p1;
+        await p2;
+
+        assert.equal(app._isFetchingQueues, false);
+        assert.equal(fetchCount, 1);
+        app.destroy();
+      });
+
+      it("should discard stale out-of-order queue metrics responses", async () => {
+        let resolveSlow;
+        const slowPromise = new Promise((resolve) => {
+          resolveSlow = resolve;
+        });
+
+        const mockApiClient = {
+          getQueues: async () => {
+            return { queues: [{ name: "fast-queue", metrics: { waiting: 99 } }] };
+          }
+        };
+
+        const app = new DashboardApp({ apiClient: mockApiClient });
+
+        // Request 1: Slow request
+        mockApiClient.getQueues = async () => {
+          await slowPromise;
+          return { queues: [{ name: "slow-queue", metrics: { waiting: 1 } }] };
+        };
+        const p1 = app.fetchQueues();
+
+        // Request 2: Fast request started while Request 1 is still in flight
+        mockApiClient.getQueues = async () => {
+          return { queues: [{ name: "fast-queue", metrics: { waiting: 99 } }] };
+        };
+        const p2 = app.fetchQueues();
+
+        await p2;
+        assert.equal(app.state.queues[0].name, "fast-queue");
+        assert.equal(app.state.queues[0].metrics.waiting, 99);
+
+        // Now let slow Request 1 resolve
+        resolveSlow();
+        await p1;
+
+        // Ensure state was NOT overwritten by the stale Request 1
+        assert.equal(app.state.queues[0].name, "fast-queue");
+        assert.equal(app.state.queues[0].metrics.waiting, 99);
+        app.destroy();
+      });
+
+      it("should discard stale errors from earlier requests", async () => {
+        let resolveSlowError;
+        const slowErrorPromise = new Promise((resolve) => {
+          resolveSlowError = resolve;
+        });
+
+        const mockApiClient = {
+          getQueues: async () => {}
+        };
+
+        const app = new DashboardApp({ apiClient: mockApiClient });
+
+        // Request 1: Slow error
+        mockApiClient.getQueues = async () => {
+          await slowErrorPromise;
+          throw new Error("Old slow error");
+        };
+        const p1 = app.fetchQueues();
+
+        // Request 2: Fast success
+        mockApiClient.getQueues = async () => {
+          return { queues: [{ name: "good-queue", metrics: { waiting: 5 } }] };
+        };
+        const p2 = app.fetchQueues();
+
+        await p2;
+        assert.equal(app.state.error, null);
+        assert.equal(app.state.queues[0].name, "good-queue");
+
+        // Resolve old slow error
+        resolveSlowError();
+        await p1;
+
+        // Ensure error state was NOT overwritten by stale error
+        assert.equal(app.state.error, null);
+        assert.equal(app.state.queues[0].name, "good-queue");
+        app.destroy();
+      });
+
+      it("should handle temporary failures gracefully by retaining cached queues and showing banner", async () => {
+        const initialQueues = [
+          { name: "persistent-queue", isPaused: false, metrics: { waiting: 12, active: 3, delayed: 0, dlq: 0 } }
+        ];
+
+        let failNext = false;
+        const mockApiClient = {
+          getQueues: async () => {
+            if (failNext) {
+              const err = new Error("Temporary Redis reconnect failure");
+              err.code = "REDIS_RECONNECT";
+              throw err;
+            }
+            return { queues: initialQueues };
+          }
+        };
+
+        const app = new DashboardApp({ apiClient: mockApiClient });
+
+        // Initial successful fetch
+        await app.fetchQueues();
+        assert.equal(app.state.queues.length, 1);
+        assert.equal(app.state.queues[0].name, "persistent-queue");
+        assert.equal(app.state.error, null);
+        assert.equal(app.state.syncError, null);
+
+        // Next background refresh fails
+        failNext = true;
+        await app.fetchQueues({ isAutoRefresh: true });
+
+        // Cached queues must be preserved!
+        assert.equal(app.state.queues.length, 1);
+        assert.equal(app.state.queues[0].name, "persistent-queue");
+        assert.ok(app.state.syncError !== null);
+        assert.equal(app.state.syncError.code, "REDIS_RECONNECT");
+
+        // OverviewView rendered with sync error shows cached data and banner
+        const html = OverviewView.renderData(app.state.queues, {
+          syncError: app.state.syncError,
+          lastUpdated: app.state.lastUpdated
+        });
+        assert.match(html, /sync-error-banner/);
+        assert.match(html, /Temporary Sync Failure/);
+        assert.match(html, /Temporary Redis reconnect failure/);
+        assert.match(html, /persistent-queue/);
+        assert.match(html, /id="retry-overview-sync-btn"/);
+
+        // Subsequent poll succeeds and clears sync error
+        failNext = false;
+        await app.fetchQueues({ isAutoRefresh: true });
+        assert.equal(app.state.syncError, null);
+        assert.equal(app.state.error, null);
+        assert.equal(app.state.queues.length, 1);
+
+        const recoveredHtml = OverviewView.renderData(app.state.queues, {
+          syncError: app.state.syncError,
+          lastUpdated: app.state.lastUpdated
+        });
+        assert.doesNotMatch(recoveredHtml, /sync-error-banner/);
+        assert.match(recoveredHtml, /persistent-queue/);
+        app.destroy();
+      });
+
+      it("should show full error state when initial fetch fails (0 cached queues)", async () => {
+        const mockApiClient = {
+          getQueues: async () => {
+            const err = new Error("Connection refused");
+            err.code = "CONNECTION_REFUSED";
+            throw err;
+          }
+        };
+
+        const app = new DashboardApp({ apiClient: mockApiClient });
+        await app.fetchQueues();
+
+        assert.equal(app.state.queues.length, 0);
+        assert.ok(app.state.error !== null);
+        assert.equal(app.state.error.code, "CONNECTION_REFUSED");
+
+        const html = OverviewView.renderError(app.state.error);
+        assert.match(html, /error-state/);
+        assert.match(html, /CONNECTION_REFUSED/);
+        assert.match(html, /Connection refused/);
+        assert.match(html, /id="retry-overview-btn"/);
+        app.destroy();
+      });
+
+      it("should bind polling controls and update pollInterval on select change", () => {
+        let changeListener = null;
+        const fakeSelect = {
+          value: "5000",
+          addEventListener: (event, handler) => {
+            if (event === "change") changeListener = handler;
+          }
+        };
+
+        const originalDocument = global.document;
+        global.document = {
+          getElementById: (id) => {
+            if (id === "poll-interval-select") return fakeSelect;
+            return null;
+          },
+          querySelectorAll: () => [],
+          querySelector: () => null
+        };
+
+        try {
+          const app = new DashboardApp({ pollInterval: 5000 });
+          app.bindPollingControls();
+
+          assert.equal(fakeSelect.value, "5000");
+          assert.ok(typeof changeListener === "function");
+
+          // Simulate user selecting "Every 2s" (2000ms)
+          changeListener({ target: { value: "2000" } });
+          assert.equal(app.pollInterval, 2000);
+          assert.equal(app._isPolling, true);
+
+          // Simulate user selecting "Off (Manual)" (0ms)
+          changeListener({ target: { value: "0" } });
+          assert.equal(app.pollInterval, 0);
+          assert.equal(app._isPolling, false);
+          assert.equal(app._pollTimer, null);
+
+          app.destroy();
+        } finally {
+          global.document = originalDocument;
+        }
+      });
+
+      it("should bind beforeunload and pagehide to invoke destroy and clean up timers", () => {
+        const listeners = {};
+        const originalWindow = global.window;
+        global.window = {
+          addEventListener: (event, handler) => {
+            listeners[event] = handler;
+          },
+          removeEventListener: (event, handler) => {
+            if (listeners[event] === handler) delete listeners[event];
+          }
+        };
+
+        try {
+          const app = new DashboardApp({ pollInterval: 2000 });
+          app.bindUnload();
+          app.startPolling();
+
+          assert.ok(typeof listeners.beforeunload === "function");
+          assert.ok(typeof listeners.pagehide === "function");
+          assert.equal(app._isPolling, true);
+          assert.ok(app._pollTimer !== null);
+
+          // Trigger page unload
+          listeners.beforeunload();
+          assert.equal(app._isPolling, false);
+          assert.equal(app._pollTimer, null);
+          assert.equal(app._isDestroyed, true);
+        } finally {
+          global.window = originalWindow;
+        }
+      });
+
+      it("should execute app.init() without throwing and initialize overview polling", () => {
+        const originalDocument = global.document;
+        const originalWindow = global.window;
+
+        global.document = {
+          getElementById: () => null,
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          addEventListener: () => {}
+        };
+        global.window = {
+          location: { hash: "", pathname: "/" },
+          addEventListener: () => {},
+          removeEventListener: () => {}
+        };
+
+        try {
+          const app = new DashboardApp({ pollInterval: 5000 });
+          assert.doesNotThrow(() => {
+            app.init();
+          });
+          assert.equal(app.state.activeView, "overview");
+          assert.equal(app._isPolling, true);
+          assert.ok(app._pollTimer !== null);
+          app.destroy();
+        } finally {
+          global.document = originalDocument;
+          global.window = originalWindow;
+        }
+      });
+
+      it("should not start polling on init() if initial hash routed to a non-overview view", () => {
+        const originalDocument = global.document;
+        const originalWindow = global.window;
+
+        global.document = {
+          getElementById: () => null,
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          addEventListener: () => {}
+        };
+        global.window = {
+          location: { hash: "#/dlq", pathname: "/" },
+          addEventListener: () => {},
+          removeEventListener: () => {}
+        };
+
+        try {
+          const app = new DashboardApp({ pollInterval: 5000 });
+          app.init();
+          assert.equal(app.state.activeView, "dlq");
+          assert.equal(app._isPolling, false);
+          assert.equal(app._pollTimer, null);
+          app.destroy();
+        } finally {
+          global.document = originalDocument;
+          global.window = originalWindow;
+        }
+      });
+
+      it("should discard responses and prevent state mutation when request completes after destroy()", async () => {
+        let resolveInFlight;
+        const slowPromise = new Promise((resolve) => {
+          resolveInFlight = resolve;
+        });
+
+        const mockApiClient = {
+          getQueues: async () => {
+            await slowPromise;
+            return { queues: [{ name: "never-loaded", metrics: { waiting: 10 } }] };
+          }
+        };
+
+        const app = new DashboardApp({ apiClient: mockApiClient });
+        const p = app.fetchQueues();
+
+        // Destroy app while fetch is in-flight
+        app.destroy();
+        assert.equal(app._isDestroyed, true);
+
+        // Resolve slow promise
+        resolveInFlight();
+        await p;
+
+        // Ensure state was not modified
+        assert.equal(app.state.queues.length, 0);
+        assert.equal(app.state.lastUpdated, null);
+      });
+    });
+  });
 });

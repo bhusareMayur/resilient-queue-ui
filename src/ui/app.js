@@ -31,11 +31,11 @@
 
       // Detect base URL from options, meta tag, or current URL
       let baseUrl = options.baseUrl || "";
-      if (!baseUrl && typeof document !== "undefined") {
+      if (!baseUrl && typeof document !== "undefined" && typeof document.querySelector === "function") {
         const metaTag = document.querySelector('meta[name="api-base-url"]');
         if (metaTag && metaTag.content) {
           baseUrl = metaTag.content;
-        } else if (typeof window !== "undefined" && window.location) {
+        } else if (typeof window !== "undefined" && window.location && typeof window.location.pathname === "string") {
           // If mounted under /admin/queues, detect basePath
           const pathname = window.location.pathname.replace(/\/ui(?:\/.*)?$/, "").replace(/\/index\.html$/, "");
           baseUrl = pathname.replace(/\/+$/, "");
@@ -49,6 +49,7 @@
         queues: [],
         loading: false,
         error: null,
+        syncError: null,
         lastUpdated: null,
 
         // Dead Letter Queue (DLQ) Explorer State
@@ -78,6 +79,24 @@
       this._dlqRequestId = 0;
       this._jobRequestId = 0;
 
+      this.pollInterval =
+        options.pollInterval !== undefined
+          ? options.pollInterval
+          : options.pollingInterval !== undefined
+          ? options.pollingInterval
+          : 5000;
+      if (options.autoRefresh === false) {
+        this.pollInterval = 0;
+      }
+
+      this._pollTimer = null;
+      this._isPolling = false;
+      this._isFetchingQueues = false;
+      this._inFlightQueuesCount = 0;
+      this._currentQueuesPromise = null;
+      this._boundBeforeUnload = null;
+      this._isDestroyed = false;
+
       this.viewTitles = {
         overview: "Queue Overview",
         dlq: "Dead Letter Queue (DLQ)",
@@ -92,7 +111,9 @@
       this.bindNavigation();
       this.bindMobileToggle();
       this.bindRefresh();
+      this.bindPollingControls();
       this.bindHashRouting();
+      this.bindUnload();
 
       // Initial route from URL hash if present
       if (typeof window !== "undefined" && window.location.hash) {
@@ -100,62 +121,219 @@
       }
 
       this.fetchQueues();
+
+      // Start auto-refresh polling if on overview view and interval > 0
+      if (this.state.activeView === "overview" && this.pollInterval > 0) {
+        this.startPolling();
+      }
+    }
+
+    /**
+     * Starts background polling for overview metrics at the configured or specified interval.
+     *
+     * @param {number} [intervalMs]
+     */
+    startPolling(intervalMs) {
+      if (typeof intervalMs === "number" && !Number.isNaN(intervalMs)) {
+        this.pollInterval = Math.max(0, intervalMs);
+      }
+      if (this._isDestroyed || this.pollInterval <= 0 || this.state.activeView !== "overview") {
+        this.stopPolling();
+        return;
+      }
+      this._isPolling = true;
+      this._scheduleNextPoll();
+    }
+
+    /**
+     * Stops active background polling and clears any pending timers.
+     */
+    stopPolling() {
+      this._isPolling = false;
+      if (this._pollTimer) {
+        clearTimeout(this._pollTimer);
+        this._pollTimer = null;
+      }
+    }
+
+    /**
+     * Updates polling interval and adjusts timer state accordingly.
+     *
+     * @param {number|string} intervalMs
+     */
+    setPollInterval(intervalMs) {
+      const num = parseInt(intervalMs, 10);
+      this.pollInterval = !Number.isNaN(num) && num >= 0 ? num : 0;
+
+      if (typeof document !== "undefined") {
+        const select = document.getElementById("poll-interval-select");
+        if (select && select.value !== String(this.pollInterval)) {
+          select.value = String(this.pollInterval);
+        }
+      }
+
+      if (this.pollInterval <= 0 || this.state.activeView !== "overview") {
+        this.stopPolling();
+      } else {
+        this.startPolling();
+      }
+    }
+
+    /**
+     * Schedules the next polling tick using setTimeout to guarantee zero overlapping requests.
+     * @private
+     */
+    _scheduleNextPoll() {
+      if (this._pollTimer) {
+        clearTimeout(this._pollTimer);
+        this._pollTimer = null;
+      }
+      if (this._isDestroyed || !this._isPolling || this.pollInterval <= 0 || this.state.activeView !== "overview") {
+        return;
+      }
+      this._pollTimer = setTimeout(async () => {
+        this._pollTimer = null;
+        await this._pollTick();
+      }, this.pollInterval);
+
+      if (this._pollTimer && typeof this._pollTimer.unref === "function") {
+        this._pollTimer.unref();
+      }
+    }
+
+    /**
+     * Executes a single polling tick with overlap prevention.
+     * @private
+     */
+    async _pollTick() {
+      if (this._isDestroyed || !this._isPolling || this.state.activeView !== "overview") {
+        return;
+      }
+      if (this._isFetchingQueues) {
+        // Avoid overlapping requests if previous fetch is still running
+        this._scheduleNextPoll();
+        return;
+      }
+
+      try {
+        await this.fetchQueues({ isAutoRefresh: true });
+      } catch {
+        // Handled inside fetchQueues
+      } finally {
+        if (!this._isDestroyed && this._isPolling && this.state.activeView === "overview") {
+          this._scheduleNextPoll();
+        }
+      }
+    }
+
+    /**
+     * Cleans up timers and event listeners when view or app is destroyed.
+     */
+    destroy() {
+      this._isDestroyed = true;
+      this.stopPolling();
+      if (typeof window !== "undefined") {
+        if (this._boundBeforeUnload) {
+          window.removeEventListener("beforeunload", this._boundBeforeUnload);
+          window.removeEventListener("pagehide", this._boundBeforeUnload);
+          this._boundBeforeUnload = null;
+        }
+      }
     }
 
     /**
      * Fetches queue metrics from GET /api/queues and updates view.
+     * Supports graceful error handling, stale response discarding, and overlap prevention.
+     *
+     * @param {object} [options={}]
+     * @param {boolean} [options.isAutoRefresh=false]
+     * @param {boolean} [options.skipIfBusy=false]
+     * @param {boolean} [options.preventOverlap=false]
      */
-    async fetchQueues() {
+    fetchQueues(options = {}) {
       if (!this.apiClient) {
-        return;
+        return Promise.resolve();
       }
 
+      if ((options.skipIfBusy || options.preventOverlap) && this._isFetchingQueues && this._currentQueuesPromise) {
+        return this._currentQueuesPromise;
+      }
+
+      this._isFetchingQueues = true;
+      this._inFlightQueuesCount = (this._inFlightQueuesCount || 0) + 1;
       const requestId = ++this._queuesRequestId;
+      const isAutoRefresh = Boolean(options.isAutoRefresh);
 
       this.state.loading = true;
-      this.state.error = null;
-      this.updateStatusIndicator("loading", "Fetching metrics...");
+      if (this.state.queues.length === 0) {
+        this.state.error = null;
+      }
+      this.updateStatusIndicator("loading", isAutoRefresh ? "Refreshing metrics..." : "Fetching metrics...");
 
-      if (this.state.activeView === "overview") {
+      if (this.state.activeView === "overview" && this.state.queues.length === 0) {
         this.renderView();
       }
 
-      try {
-        const response = await this.apiClient.getQueues();
-        if (requestId !== this._queuesRequestId) {
-          return;
-        }
+      const promise = (async () => {
+        try {
+          const response = await this.apiClient.getQueues();
+          if (this._isDestroyed || requestId !== this._queuesRequestId) {
+            return; // Discard stale response or post-destruction
+          }
 
-        this.state.queues = Array.isArray(response?.queues) ? response.queues : [];
-        this.state.loading = false;
-        this.state.lastUpdated = new Date();
-        this.updateStatusIndicator("online", `Connected (${this.state.queues.length} queues)`);
+          this.state.queues = Array.isArray(response?.queues) ? response.queues : [];
+          this.state.loading = false;
+          this.state.error = null;
+          this.state.syncError = null;
+          this.state.lastUpdated = new Date();
+          this.updateStatusIndicator("online", `Connected (${this.state.queues.length} queues)`);
 
-        // If on DLQ view without selected queue, pick a candidate
-        if (this.state.activeView === "dlq" && !this.state.dlq.selectedQueue && this.state.queues.length > 0) {
-          const candidate = this.state.queues.find((q) => (q?.metrics?.dlq || 0) > 0) || this.state.queues[0];
-          if (candidate?.name) {
-            this.state.dlq.selectedQueue = candidate.name;
-            this.fetchDLQ();
+          // If on DLQ view without selected queue, pick a candidate (initial or manual load only, not auto-refresh)
+          if (!isAutoRefresh && this.state.activeView === "dlq" && !this.state.dlq.selectedQueue && this.state.queues.length > 0) {
+            const candidate = this.state.queues.find((q) => (q?.metrics?.dlq || 0) > 0) || this.state.queues[0];
+            if (candidate?.name) {
+              this.state.dlq.selectedQueue = candidate.name;
+              this.fetchDLQ();
+            }
+          }
+
+          // If on Job view without selected queue, pick a candidate (initial or manual load only)
+          if (!isAutoRefresh && this.state.activeView === "job" && !this.state.job.selectedQueue && this.state.queues.length > 0) {
+            this.state.job.selectedQueue = this.state.queues[0].name;
+          }
+        } catch (err) {
+          if (this._isDestroyed || requestId !== this._queuesRequestId) {
+            return; // Discard stale error or post-destruction
+          }
+
+          this.state.loading = false;
+          this.state.error = err;
+
+          if (this.state.queues.length > 0) {
+            // Gracefully preserve existing data and report sync error
+            this.state.syncError = err;
+            this.updateStatusIndicator("offline", `Sync error: ${err.message || "Failed to refresh"}`);
+          } else {
+            this.updateStatusIndicator("offline", "API Error");
+          }
+        } finally {
+          this._inFlightQueuesCount = Math.max(0, (this._inFlightQueuesCount || 1) - 1);
+          if (this._inFlightQueuesCount === 0) {
+            this._isFetchingQueues = false;
+            this._currentQueuesPromise = null;
           }
         }
 
-        // If on Job view without selected queue, pick a candidate
-        if (this.state.activeView === "job" && !this.state.job.selectedQueue && this.state.queues.length > 0) {
-          this.state.job.selectedQueue = this.state.queues[0].name;
+        // If an auto-refresh finishes after navigating away from overview, do not re-render the other view
+        if (!this._isDestroyed && (!isAutoRefresh || this.state.activeView === "overview")) {
+          this.renderView();
         }
-      } catch (err) {
-        if (requestId !== this._queuesRequestId) {
-          return;
-        }
+      })();
 
-        this.state.loading = false;
-        this.state.error = err;
-        this.updateStatusIndicator("offline", "API Error");
-      }
-
-      this.renderView();
+      this._currentQueuesPromise = promise;
+      return promise;
     }
+
 
     /**
      * Fetches Dead Letter Queue items for the currently selected queue.
@@ -297,7 +475,15 @@
         viewName = "overview";
       }
 
+      const previousView = this.state.activeView;
       this.state.activeView = viewName;
+
+      // Timer cleanup when navigating away from overview monitoring view
+      if (previousView === "overview" && viewName !== "overview") {
+        this.stopPolling();
+      } else if (viewName === "overview" && previousView !== "overview" && this.pollInterval > 0) {
+        this.startPolling();
+      }
 
       if (viewName === "dlq") {
         if (params.queue) {
@@ -375,7 +561,7 @@
      * Renders active view into content container.
      */
     renderView() {
-      if (typeof document === "undefined") return;
+      if (this._isDestroyed || typeof document === "undefined") return;
 
       const container = document.getElementById(this.containerId);
       if (!container) return;
@@ -390,10 +576,16 @@
       if (this.state.activeView === "overview") {
         if (this.state.loading && this.state.queues.length === 0) {
           html = OverviewView.renderLoading();
-        } else if (this.state.error) {
+        } else if (this.state.error && this.state.queues.length === 0) {
           html = OverviewView.renderError(this.state.error);
         } else {
-          html = OverviewView.renderData(this.state.queues);
+          html = OverviewView.renderData(this.state.queues, {
+            lastUpdated: this.state.lastUpdated,
+            syncError: this.state.syncError,
+            pollInterval: this.pollInterval,
+            isPolling: this._isPolling,
+            loading: this.state.loading
+          });
         }
       } else if (this.state.activeView === "dlq") {
         html = DLQView.render(this.state.dlq, this.state.queues);
@@ -424,13 +616,22 @@
     bindViewEvents() {
       if (typeof document === "undefined") return;
 
-      // Retry overview button
+      // Retry overview button (initial error state)
       const retryOverviewBtn = document.getElementById("retry-overview-btn");
       if (retryOverviewBtn) {
         retryOverviewBtn.addEventListener("click", () => {
           this.fetchQueues();
         });
       }
+
+      // Retry overview sync button (temporary failure banner)
+      const retryOverviewSyncBtn = document.getElementById("retry-overview-sync-btn");
+      if (retryOverviewSyncBtn) {
+        retryOverviewSyncBtn.addEventListener("click", () => {
+          this.fetchQueues();
+        });
+      }
+
 
       // Overview table "View DLQ" badges
       const dlqLinks = document.querySelectorAll(".view-dlq-link");
@@ -654,11 +855,13 @@
       }
 
       // Escape key to close mobile menu
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") {
-          this.closeMobileSidebar();
-        }
-      });
+      if (typeof document.addEventListener === "function") {
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") {
+            this.closeMobileSidebar();
+          }
+        });
+      }
     }
 
     closeMobileSidebar() {
@@ -739,6 +942,21 @@
     }
 
     /**
+     * Binds change events on the auto-refresh interval select element.
+     */
+    bindPollingControls() {
+      if (typeof document === "undefined") return;
+
+      const select = document.getElementById("poll-interval-select");
+      if (select) {
+        select.value = String(this.pollInterval);
+        select.addEventListener("change", (e) => {
+          this.setPollInterval(e.target.value);
+        });
+      }
+    }
+
+    /**
      * Listens for browser URL hash changes for lightweight SPA routing.
      */
     bindHashRouting() {
@@ -747,6 +965,19 @@
       window.addEventListener("hashchange", () => {
         this.handleHashChange();
       });
+    }
+
+    /**
+     * Binds beforeunload and pagehide events to ensure timers are cleared on teardown.
+     */
+    bindUnload() {
+      if (typeof window === "undefined") return;
+
+      this._boundBeforeUnload = () => {
+        this.destroy();
+      };
+      window.addEventListener("beforeunload", this._boundBeforeUnload);
+      window.addEventListener("pagehide", this._boundBeforeUnload);
     }
   }
 
