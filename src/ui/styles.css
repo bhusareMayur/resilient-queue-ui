@@ -1021,3 +1021,67 @@ button {
   color: var(--text-primary);
   border-radius: var(--radius-sm);
 }
+
+/* Milestone 9: Queue Management & Operational Controls */
+.overview-toolbar {
+  margin-bottom: 1.25rem;
+}
+
+.sort-header-btn {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.15s ease;
+}
+
+.sort-header-btn:hover {
+  color: var(--accent-blue);
+}
+
+.sort-indicator {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.sort-icon-idle {
+  opacity: 0.4;
+}
+
+.btn-xs {
+  padding: 0.2rem 0.5rem;
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.action-nav-btn {
+  margin-left: 0.25rem;
+  text-decoration: none;
+}
+
+.action-nav-btn:hover {
+  text-decoration: none;
+}
+
+.empty-filter-state {
+  text-align: center;
+}
+
+.diagnostic-guidance {
+  width: 100%;
+}
+
+.diagnostic-guidance .callout {
+  margin: 0;
+}

@@ -93,11 +93,33 @@ function renderDLQPromptSelect() {
   `;
 }
 
+function getDLQDiagnosticInfo(error, queueName) {
+  const code = error?.code || (error?.status === 404 ? "QUEUE_NOT_FOUND" : error?.status === 503 ? "QUEUE_CLOSED" : "INTERNAL_ERROR");
+  let guidance = "Check host application logs and verify Redis connectivity.";
+
+  switch (code) {
+    case "QUEUE_CLOSED":
+      guidance = "The target ResilientQueue instance has been closed via queue.close(). DLQ inspection cannot proceed until the queue is restarted.";
+      break;
+    case "QUEUE_NOT_FOUND":
+      guidance = `Queue '${queueName || "unknown"}' is not registered with the dashboard adapter. Ensure it is included in the 'queues' configuration object during adapter initialization.`;
+      break;
+    case "INTERNAL_ERROR":
+      guidance = "An internal error occurred while querying Redis for dead-letter jobs. Check Redis status and server logs.";
+      break;
+    case "NETWORK_ERROR":
+      guidance = "Unable to reach the dashboard API. Check your network connection and server status.";
+      break;
+  }
+
+  return { code, guidance };
+}
+
 function renderDLQError(error, queueName) {
   const code = error?.code || "INTERNAL_ERROR";
   const message = error?.message || "Failed to retrieve DLQ jobs.";
-
   const isNotFound = code === "QUEUE_NOT_FOUND" || error?.status === 404;
+  const diag = getDLQDiagnosticInfo(error, queueName);
 
   return `
     <div class="state-container error-state" role="alert" aria-live="assertive">
@@ -107,7 +129,13 @@ function renderDLQError(error, queueName) {
       <p class="state-description">
         ${isNotFound ? `Queue <code>${escapeHtml(queueName)}</code> is not registered with the dashboard adapter.` : escapeHtml(message)}
       </p>
-      <button type="button" class="btn btn-primary" id="dlq-retry-btn" aria-label="Retry loading DLQ">
+      <div class="diagnostic-guidance" style="margin-top: 0.75rem; max-width: 540px; text-align: left;">
+        <div class="callout callout-warning">
+          <div class="callout-header"><span>Operational Diagnostic</span></div>
+          <div class="callout-body">${escapeHtml(diag.guidance)}</div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-primary" id="dlq-retry-btn" aria-label="Retry loading DLQ" style="margin-top: 1rem;">
         <span>Retry</span>
       </button>
     </div>
@@ -438,7 +466,8 @@ const DLQView = {
   renderNoQueues: renderDLQNoQueues,
   renderPromptSelect: renderDLQPromptSelect,
   renderTable: renderDLQTable,
-  renderJobDetail
+  renderJobDetail,
+  getDLQDiagnosticInfo
 };
 
 if (typeof module !== "undefined" && module.exports) {

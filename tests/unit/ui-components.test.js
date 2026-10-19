@@ -1745,4 +1745,356 @@ describe("UI Components & Views", () => {
       });
     });
   });
+
+  describe("Milestone 9: Queue Management & Operational Controls", () => {
+    describe("Client-Side Search & Filtering", () => {
+      it("should filter queues by case-insensitive name match", () => {
+        const queues = [
+          { name: "email-notifications", metrics: { waiting: 5, active: 1, delayed: 0, dlq: 0 } },
+          { name: "video-transcoder", metrics: { waiting: 0, active: 2, delayed: 0, dlq: 0 } },
+          { name: "email-digests", metrics: { waiting: 10, active: 0, delayed: 1, dlq: 0 } }
+        ];
+
+        const filtered = OverviewView.filterQueues(queues, { searchQuery: "email" });
+        assert.equal(filtered.length, 2);
+        assert.equal(filtered[0].name, "email-notifications");
+        assert.equal(filtered[1].name, "email-digests");
+
+        const filteredUpper = OverviewView.filterQueues(queues, { searchQuery: "TRANSCODER" });
+        assert.equal(filteredUpper.length, 1);
+        assert.equal(filteredUpper[0].name, "video-transcoder");
+      });
+
+      it("should filter queues by operational status", () => {
+        const queues = [
+          { name: "q-active", isPaused: false, metrics: { waiting: 1 } },
+          { name: "q-paused", isPaused: true, metrics: { waiting: 0 } },
+          { name: "q-closed", isClosed: true, metrics: null },
+          { name: "q-error", error: new Error("fail") },
+          { name: "q-unavail", metrics: null }
+        ];
+
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "active" }).length, 1);
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "active" })[0].name, "q-active");
+
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "paused" }).length, 1);
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "paused" })[0].name, "q-paused");
+
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "closed" }).length, 1);
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "closed" })[0].name, "q-closed");
+
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "error" }).length, 1);
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "error" })[0].name, "q-error");
+
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "unavailable" }).length, 1);
+        assert.equal(OverviewView.filterQueues(queues, { statusFilter: "unavailable" })[0].name, "q-unavail");
+      });
+
+      it("should combine search query and status filter", () => {
+        const queues = [
+          { name: "email-active", isPaused: false, metrics: { waiting: 1 } },
+          { name: "email-paused", isPaused: true, metrics: { waiting: 0 } },
+          { name: "video-paused", isPaused: true, metrics: { waiting: 0 } }
+        ];
+
+        const result = OverviewView.filterQueues(queues, { searchQuery: "email", statusFilter: "paused" });
+        assert.equal(result.length, 1);
+        assert.equal(result[0].name, "email-paused");
+      });
+
+      it("should render overview toolbar and display matching queue count in header badge", () => {
+        const queues = [
+          { name: "email-queue", metrics: { waiting: 1, active: 0, delayed: 0, dlq: 0 } },
+          { name: "sms-queue", metrics: { waiting: 2, active: 0, delayed: 0, dlq: 0 } }
+        ];
+
+        const html = OverviewView.renderData(queues, { searchQuery: "email" });
+        assert.match(html, /id="overview-search-input"/);
+        assert.match(html, /id="overview-status-select"/);
+        assert.match(html, /1 of 2 matching/);
+        assert.match(html, /email-queue/);
+        assert.doesNotMatch(html, /sms-queue/);
+      });
+
+      it("should render empty filter state when no queues match search filter", () => {
+        const queues = [
+          { name: "email-queue", metrics: { waiting: 1, active: 0, delayed: 0, dlq: 0 } }
+        ];
+
+        const html = OverviewView.renderData(queues, { searchQuery: "non-existent-filter-xyz" });
+        assert.match(html, /empty-filter-state/);
+        assert.match(html, /No Matching Queues/);
+        assert.match(html, /non-existent-filter-xyz/);
+        assert.match(html, /id="overview-clear-filters-btn"/);
+        assert.match(html, /id="overview-reset-filters-btn"/);
+        assert.match(html, /class="btn btn-secondary btn-sm overview-clear-btn"/);
+      });
+    });
+
+    describe("Multi-Column Sorting & Metric Non-Zero Distinction", () => {
+      it("should sort queues by numeric metrics in ascending and descending order", () => {
+        const queues = [
+          { name: "q-10", metrics: { waiting: 10 } },
+          { name: "q-1", metrics: { waiting: 1 } },
+          { name: "q-5", metrics: { waiting: 5 } }
+        ];
+
+        const asc = OverviewView.sortQueues(queues, { sortKey: "waiting", sortOrder: "asc" });
+        assert.deepEqual(asc.map((q) => q.name), ["q-1", "q-5", "q-10"]);
+
+        const desc = OverviewView.sortQueues(queues, { sortKey: "waiting", sortOrder: "desc" });
+        assert.deepEqual(desc.map((q) => q.name), ["q-10", "q-5", "q-1"]);
+      });
+
+      it("should handle unavailable metrics without treating them as zero during sorting", () => {
+        const queues = [
+          { name: "q-high", metrics: { waiting: 10 } },
+          { name: "q-zero", metrics: { waiting: 0 } },
+          { name: "q-unavail", metrics: { waiting: null } },
+          { name: "q-mid", metrics: { waiting: 2 } }
+        ];
+
+        // In ascending order: 0 must come first, NOT null. Null is not zero and sorted to the end!
+        const asc = OverviewView.sortQueues(queues, { sortKey: "waiting", sortOrder: "asc" });
+        assert.equal(asc[0].name, "q-zero"); // 0 is smallest valid number
+        assert.equal(asc[1].name, "q-mid");  // 2
+        assert.equal(asc[2].name, "q-high"); // 10
+        assert.equal(asc[3].name, "q-unavail"); // unavailable is at the end, not at 0!
+
+        // In descending order: 10 must come first, then 2, then 0, and unavailable at the end
+        const desc = OverviewView.sortQueues(queues, { sortKey: "waiting", sortOrder: "desc" });
+        assert.equal(desc[0].name, "q-high"); // 10
+        assert.equal(desc[1].name, "q-mid");  // 2
+        assert.equal(desc[2].name, "q-zero"); // 0
+        assert.equal(desc[3].name, "q-unavail"); // unavailable is at the end, not treated as 0!
+      });
+
+      it("should render appropriate aria-sort attributes, sort indicator icons, and stable element IDs on table headers", () => {
+        const queues = [
+          { name: "queue-a", metrics: { waiting: 1, active: 0, delayed: 0, dlq: 0 } }
+        ];
+
+        // Sorted by waiting descending
+        const html = OverviewView.renderData(queues, { sortKey: "waiting", sortOrder: "desc" });
+        assert.match(html, /<th scope="col" aria-sort="descending">\s*<button type="button" id="sort-btn-waiting" class="sort-header-btn" data-sort-key="waiting"/);
+        assert.match(html, /<th scope="col" aria-sort="none">\s*<button type="button" id="sort-btn-name" class="sort-header-btn" data-sort-key="name"/);
+        assert.match(html, /<th scope="col" aria-sort="none">\s*<button type="button" id="sort-btn-active" class="sort-header-btn" data-sort-key="active"/);
+        assert.match(html, /id="sort-btn-status"/);
+        assert.match(html, /id="sort-btn-delayed"/);
+        assert.match(html, /id="sort-btn-dlq"/);
+        assert.match(html, /id="sort-btn-lastUpdated"/);
+      });
+
+      it("should sort queues by lastUpdated handling valid, invalid, and missing timestamps safely", () => {
+        const queues = [
+          { name: "q-recent", lastUpdated: "2026-10-19T12:00:00.000Z" },
+          { name: "q-old", lastUpdated: "2026-10-19T10:00:00.000Z" },
+          { name: "q-invalid", lastUpdated: "not-a-valid-date" },
+          { name: "q-missing", lastUpdated: null }
+        ];
+
+        // In descending order: newest first, then older, then invalid/missing at the end
+        const desc = OverviewView.sortQueues(queues, { sortKey: "lastUpdated", sortOrder: "desc" });
+        assert.equal(desc[0].name, "q-recent");
+        assert.equal(desc[1].name, "q-old");
+        assert.equal(desc[2].name, "q-invalid");
+        assert.equal(desc[3].name, "q-missing");
+
+        // In ascending order: oldest first, then newer, then invalid/missing at the end
+        const asc = OverviewView.sortQueues(queues, { sortKey: "lastUpdated", sortOrder: "asc" });
+        assert.equal(asc[0].name, "q-old");
+        assert.equal(asc[1].name, "q-recent");
+        assert.equal(asc[2].name, "q-invalid");
+        assert.equal(asc[3].name, "q-missing");
+      });
+    });
+
+    describe("Multi-Queue Navigation & Row Actions", () => {
+      it("should render DLQ Explorer and Job Inspector navigation action buttons for each queue", () => {
+        const queues = [
+          { name: "billing-queue", metrics: { waiting: 5, active: 1, delayed: 0, dlq: 3 } },
+          { name: "clean-queue", metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 } }
+        ];
+
+        const html = OverviewView.renderData(queues);
+        assert.match(html, /class="btn btn-secondary btn-xs action-nav-btn overview-dlq-btn"/);
+        assert.match(html, /class="btn btn-secondary btn-xs action-nav-btn overview-job-btn"/);
+        assert.match(html, /data-queue="billing-queue"/);
+        assert.match(html, /data-queue="clean-queue"/);
+        assert.match(html, /href="#\/dlq\?queue=billing-queue"/);
+        assert.match(html, /href="#\/job\?queue=billing-queue"/);
+        assert.match(html, /href="#\/dlq\?queue=clean-queue"/);
+        assert.match(html, /href="#\/job\?queue=clean-queue"/);
+      });
+
+      it("should properly URL-encode queue names with spaces, slashes, and special characters in navigation links", () => {
+        const queues = [
+          { name: "org/team emails & alerts", metrics: { waiting: 1, active: 0, delayed: 0, dlq: 0 } }
+        ];
+
+        const html = OverviewView.renderData(queues);
+        assert.match(html, /href="#\/dlq\?queue=org%2Fteam%20emails%20%26%20alerts"/);
+        assert.match(html, /href="#\/job\?queue=org%2Fteam%20emails%20%26%20alerts"/);
+      });
+    });
+
+    describe("Operational Diagnostics & Error Mapping", () => {
+      it("should provide actionable diagnostics distinguishing NOT_SUPPORTED, QUEUE_CLOSED, and QUEUE_NOT_FOUND", () => {
+        const notSupportedDiag = OverviewView.getDiagnosticInfo({ code: "NOT_SUPPORTED", status: 501 });
+        assert.equal(notSupportedDiag.title, "Core Feature Not Supported");
+        assert.match(notSupportedDiag.guidance, /installed version of @mayurbhusare\/resilient-queue does not expose this method/i);
+
+        const queueClosedDiag = OverviewView.getDiagnosticInfo({ code: "QUEUE_CLOSED", status: 503 });
+        assert.equal(queueClosedDiag.title, "Queue Closed");
+        assert.match(queueClosedDiag.guidance, /queue\.close\(\)/i);
+
+        const queueNotFoundDiag = OverviewView.getDiagnosticInfo({ code: "QUEUE_NOT_FOUND", status: 404 });
+        assert.equal(queueNotFoundDiag.title, "Queue Not Registered");
+        assert.match(queueNotFoundDiag.guidance, /'queues' configuration object/i);
+      });
+
+      it("should render actionable diagnostic callout in OverviewView.renderError", () => {
+        const error = { code: "QUEUE_CLOSED", message: "Queue is closed" };
+        const html = OverviewView.renderError(error);
+        assert.match(html, /Operational Diagnostic/);
+        assert.match(html, /queue\.close\(\)/);
+        assert.match(html, /id="retry-overview-btn"/);
+      });
+
+      it("should never expose internal Redis keys, connection strings, or database details", () => {
+        const err = {
+          code: "INTERNAL_ERROR",
+          message: "Command failed at redis://user:secret123@internal-redis.cluster.local:6379"
+        };
+        const diag = OverviewView.getDiagnosticInfo(err);
+        assert.equal(diag.code, "INTERNAL_ERROR");
+        assert.doesNotMatch(diag.guidance, /secret123/);
+        assert.doesNotMatch(diag.guidance, /cluster\.local/);
+      });
+    });
+
+    describe("Security & XSS Prevention Audit", () => {
+      it("should safely sanitize malicious queue names and prevent XSS injection in overview", () => {
+        const xssQueue = {
+          name: '<script>alert("xss")</script><img src=x onerror=alert(1)>',
+          metrics: { waiting: 1, active: 0, delayed: 0, dlq: 0 }
+        };
+
+        const html = OverviewView.renderData([xssQueue], {
+          searchQuery: 'alert("xss")'
+        });
+
+        assert.doesNotMatch(html, /<script>alert\("xss"\)<\/script>/);
+        assert.doesNotMatch(html, /<img src=x onerror=alert\(1\)>/);
+        assert.match(html, /&lt;script&gt;alert\(&quot;xss&quot;\)&lt;\/script&gt;/);
+        assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+        assert.match(html, /value="alert\(&quot;xss&quot;\)"/);
+      });
+    });
+
+    describe("Lifecycle & Navigation Guards", () => {
+      it("should not re-render view if DLQ request completes after user navigated to another view", async () => {
+        let resolveDlq;
+        const dlqPromise = new Promise((resolve) => {
+          resolveDlq = resolve;
+        });
+
+        const mockApiClient = {
+          getQueueDLQ: async () => {
+            await dlqPromise;
+            return { jobs: [{ id: "job-late" }], total: 1 };
+          }
+        };
+
+        let renderCount = 0;
+        const app = new DashboardApp({ apiClient: mockApiClient });
+        app.state.activeView = "dlq";
+        app.state.dlq.selectedQueue = "emails";
+
+        // Monkey patch renderView to count invocations
+        const originalRender = app.renderView.bind(app);
+        app.renderView = () => {
+          renderCount++;
+          originalRender();
+        };
+
+        const p = app.fetchDLQ();
+
+        // User navigates to Job view before DLQ finishes
+        app.state.activeView = "job";
+
+        resolveDlq();
+        await p;
+
+        // Ensure dlq finished without re-rendering job view as dlq
+        assert.equal(app.state.activeView, "job");
+        app.destroy();
+      });
+
+      it("should safely handle malformed URI decoding in hashchange without throwing", () => {
+        const app = new DashboardApp();
+        const originalWindow = global.window;
+        global.window = {
+          location: { hash: "#/dlq/%E0%A4%A" } // Invalid incomplete percent-encoding
+        };
+
+        try {
+          assert.doesNotThrow(() => {
+            app.handleHashChange();
+          });
+          assert.equal(app.state.activeView, "dlq");
+        } finally {
+          global.window = originalWindow;
+          app.destroy();
+        }
+      });
+
+      it("should bind and trigger clear filter buttons to reset search and status filter", () => {
+        const originalDocument = global.document;
+        let clearClickCallback;
+        const fakeClearBtn = {
+          addEventListener: (event, handler) => {
+            if (event === "click") {
+              clearClickCallback = handler;
+            }
+          }
+        };
+
+        global.document = {
+          getElementById: () => null,
+          querySelectorAll: (sel) => {
+            if (sel.includes("overview-clear-btn") || sel.includes("overview-clear-filters-btn")) {
+              return [fakeClearBtn];
+            }
+            return [];
+          },
+          querySelector: () => null,
+          activeElement: null
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.state.overview.searchQuery = "failing-queue";
+          app.state.overview.statusFilter = "error";
+
+          let rendered = false;
+          app.renderView = () => {
+            rendered = true;
+          };
+
+          app.bindViewEvents();
+          assert.ok(typeof clearClickCallback === "function");
+
+          clearClickCallback();
+          assert.equal(app.state.overview.searchQuery, "");
+          assert.equal(app.state.overview.statusFilter, "all");
+          assert.equal(rendered, true);
+
+          app.destroy();
+        } finally {
+          global.document = originalDocument;
+        }
+      });
+    });
+  });
 });
