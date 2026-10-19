@@ -103,10 +103,11 @@ The package includes a built-in, lightweight administration dashboard served dir
 
 - **Clean, Responsive Layout**: Includes a sidebar navigation area and responsive drawer for mobile devices.
 - **Views**:
-  - **Queue Overview**: Consumes `GET /api/queues` with real-time aggregate telemetry cards, paused/active badges, and queue metrics table.
-  - **Dead Letter Queue (DLQ) Explorer**: Read-only browser for dead-letter jobs with pagination, sort order toggle, corrupted JSON resilience, failure diagnostics, and payload inspection.
+  - **Queue Overview**: Consumes `GET /api/queues` with real-time aggregate telemetry cards, paused/active/closed/unavailable/error badges, client-side search and status filtering, multi-column sorting (with strict non-zero distinction for unavailable metrics), direct row-level navigation to DLQ Explorer and Job Inspector, and configurable background polling.
+  - **Dead Letter Queue (DLQ) Explorer**: Read-only browser for dead-letter jobs with pagination, sort order toggle, corrupted JSON resilience, failure diagnostics, payload inspection, and cross-linking to Job Inspector.
   - **Job Inspector**: Comprehensive job inspection view supporting lookups by queue and job ID (`GET /api/queues/:queueName/jobs/:jobId`), displaying execution state badges, progress bar, lifecycle timestamps, failure diagnostics, input data payloads, and return values.
-- **Robust UI States**: Handles loading spinners, empty states (with configuration snippet), 404 not found states, and API error states with an interactive "Retry" action.
+- **Operational Diagnostics**: Actionable, structured guidance for known API error codes (`QUEUE_CLOSED`, `QUEUE_NOT_FOUND`, `JOB_NOT_FOUND`, `NOT_SUPPORTED`, `VALIDATION_ERROR`, `INTERNAL_ERROR`), clearly distinguishing core library version compatibility disclosures from missing queues, closed queue instances, and server errors.
+- **Robust UI States**: Handles loading spinners, empty states (with server configuration snippets), empty search filter states, and temporary sync failure banners with cached queue retention.
 - **Zero External Frontend Dependencies**: Pure semantic HTML5, modern CSS3 with CSS variables, and modular vanilla JavaScript.
 
 ### Reusable Frontend API Client

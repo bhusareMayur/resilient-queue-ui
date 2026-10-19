@@ -52,6 +52,14 @@
         syncError: null,
         lastUpdated: null,
 
+        // Overview Management, Search, and Sorting State (Milestone 9)
+        overview: {
+          searchQuery: typeof options.searchQuery === "string" ? options.searchQuery : "",
+          statusFilter: typeof options.statusFilter === "string" ? options.statusFilter : "all",
+          sortKey: typeof options.sortKey === "string" ? options.sortKey : "name",
+          sortOrder: typeof options.sortOrder === "string" ? options.sortOrder : "asc"
+        },
+
         // Dead Letter Queue (DLQ) Explorer State
         dlq: {
           selectedQueue: null,
@@ -339,7 +347,7 @@
      * Fetches Dead Letter Queue items for the currently selected queue.
      */
     async fetchDLQ() {
-      if (!this.apiClient || !this.state.dlq.selectedQueue) {
+      if (this._isDestroyed || !this.apiClient || !this.state.dlq.selectedQueue) {
         return;
       }
 
@@ -348,7 +356,9 @@
 
       this.state.dlq.loading = true;
       this.state.dlq.error = null;
-      this.renderView();
+      if (!this._isDestroyed && this.state.activeView === "dlq") {
+        this.renderView();
+      }
 
       try {
         const response = await this.apiClient.getQueueDLQ(requestedQueue, {
@@ -357,7 +367,11 @@
           order: this.state.dlq.order
         });
 
-        if (requestId !== this._dlqRequestId || this.state.dlq.selectedQueue !== requestedQueue) {
+        if (
+          this._isDestroyed ||
+          requestId !== this._dlqRequestId ||
+          this.state.dlq.selectedQueue !== requestedQueue
+        ) {
           return;
         }
 
@@ -368,7 +382,11 @@
         this.state.dlq.limit = typeof response?.limit === "number" ? response.limit : this.state.dlq.limit;
         this.state.dlq.order = response?.order || this.state.dlq.order;
       } catch (err) {
-        if (requestId !== this._dlqRequestId || this.state.dlq.selectedQueue !== requestedQueue) {
+        if (
+          this._isDestroyed ||
+          requestId !== this._dlqRequestId ||
+          this.state.dlq.selectedQueue !== requestedQueue
+        ) {
           return;
         }
 
@@ -377,7 +395,9 @@
         this.state.dlq.jobs = [];
       }
 
-      this.renderView();
+      if (!this._isDestroyed && this.state.activeView === "dlq") {
+        this.renderView();
+      }
     }
 
     /**
@@ -387,7 +407,7 @@
      * @param {string} [jobId]
      */
     async fetchJob(queueName, jobId) {
-      if (!this.apiClient) return;
+      if (this._isDestroyed || !this.apiClient) return;
 
       const trimmedQueue = (typeof queueName === "string" ? queueName : (this.state.job.selectedQueue || "")).trim();
       const trimmedJobId = (typeof jobId === "string" ? jobId : (this.state.job.jobId || "")).trim();
@@ -401,7 +421,9 @@
           message: !trimmedQueue ? "Please select a registered queue." : "jobId must be a non-empty string.",
           status: 400
         };
-        this.renderView();
+        if (!this._isDestroyed && this.state.activeView === "job") {
+          this.renderView();
+        }
         return;
       }
 
@@ -409,7 +431,9 @@
       this.state.job.jobId = trimmedJobId;
       this.state.job.loading = true;
       this.state.job.error = null;
-      this.renderView();
+      if (!this._isDestroyed && this.state.activeView === "job") {
+        this.renderView();
+      }
 
       const requestId = ++this._jobRequestId;
 
@@ -417,11 +441,12 @@
         const response = await this.apiClient.getJob(trimmedQueue, trimmedJobId);
 
         if (
+          this._isDestroyed ||
           requestId !== this._jobRequestId ||
           this.state.job.selectedQueue !== trimmedQueue ||
           this.state.job.jobId !== trimmedJobId
         ) {
-          return; // Discard stale response
+          return; // Discard stale response or post-destruction
         }
 
         this.state.job.loading = false;
@@ -429,11 +454,12 @@
         this.state.job.error = null;
       } catch (err) {
         if (
+          this._isDestroyed ||
           requestId !== this._jobRequestId ||
           this.state.job.selectedQueue !== trimmedQueue ||
           this.state.job.jobId !== trimmedJobId
         ) {
-          return; // Discard stale error
+          return; // Discard stale error or post-destruction
         }
 
         this.state.job.loading = false;
@@ -441,7 +467,9 @@
         this.state.job.error = err;
       }
 
-      this.renderView();
+      if (!this._isDestroyed && this.state.activeView === "job") {
+        this.renderView();
+      }
     }
 
     /**
@@ -567,6 +595,14 @@
       if (!container) return;
 
       const activeElementId = document.activeElement ? document.activeElement.id : null;
+      const cursorStart =
+        activeElementId === "overview-search-input" && typeof document.activeElement.selectionStart === "number"
+          ? document.activeElement.selectionStart
+          : null;
+      const cursorEnd =
+        activeElementId === "overview-search-input" && typeof document.activeElement.selectionEnd === "number"
+          ? document.activeElement.selectionEnd
+          : null;
       const activeJobIndex = document.activeElement && document.activeElement.classList?.contains("dlq-inspect-btn")
         ? document.activeElement.getAttribute("data-job-index")
         : null;
@@ -584,7 +620,11 @@
             syncError: this.state.syncError,
             pollInterval: this.pollInterval,
             isPolling: this._isPolling,
-            loading: this.state.loading
+            loading: this.state.loading,
+            searchQuery: this.state.overview?.searchQuery || "",
+            statusFilter: this.state.overview?.statusFilter || "all",
+            sortKey: this.state.overview?.sortKey || "name",
+            sortOrder: this.state.overview?.sortOrder || "asc"
           });
         }
       } else if (this.state.activeView === "dlq") {
@@ -596,11 +636,18 @@
       container.innerHTML = html;
       this.bindViewEvents();
 
-      // Restore active focus if the element was re-rendered
+      // Restore active focus and cursor position if the element was re-rendered
       if (activeElementId) {
         const el = document.getElementById(activeElementId);
         if (el && typeof el.focus === "function") {
           el.focus();
+          if (cursorStart !== null && typeof el.setSelectionRange === "function") {
+            try {
+              el.setSelectionRange(cursorStart, cursorEnd);
+            } catch {
+              // ignore
+            }
+          }
         }
       } else if (activeJobIndex !== null) {
         const el = document.querySelector(`.dlq-inspect-btn[data-job-index="${activeJobIndex}"]`);
@@ -615,6 +662,75 @@
      */
     bindViewEvents() {
       if (typeof document === "undefined") return;
+
+      // Overview search input
+      const searchInput = document.getElementById("overview-search-input");
+      if (searchInput) {
+        searchInput.addEventListener("input", (e) => {
+          this.state.overview.searchQuery = e.target.value;
+          this.renderView();
+        });
+      }
+
+      // Overview status select
+      const statusSelect = document.getElementById("overview-status-select");
+      if (statusSelect) {
+        statusSelect.addEventListener("change", (e) => {
+          this.state.overview.statusFilter = e.target.value;
+          this.renderView();
+        });
+      }
+
+      // Overview clear filters buttons (toolbar and empty-filter state card)
+      const clearFilterBtns = document.querySelectorAll(
+        ".overview-clear-btn, #overview-clear-filters-btn, #overview-reset-filters-btn"
+      );
+      clearFilterBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          this.state.overview.searchQuery = "";
+          this.state.overview.statusFilter = "all";
+          this.renderView();
+        });
+      });
+
+      // Overview sort header buttons
+      const sortBtns = document.querySelectorAll(".sort-header-btn");
+      sortBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const key = btn.getAttribute("data-sort-key");
+          if (!key) return;
+          if (this.state.overview.sortKey === key) {
+            this.state.overview.sortOrder = this.state.overview.sortOrder === "asc" ? "desc" : "asc";
+          } else {
+            this.state.overview.sortKey = key;
+            this.state.overview.sortOrder = (key === "waiting" || key === "active" || key === "delayed" || key === "dlq") ? "desc" : "asc";
+          }
+          this.renderView();
+        });
+      });
+
+      // Overview table direct navigation action buttons
+      const overviewDlqBtns = document.querySelectorAll(".overview-dlq-btn");
+      overviewDlqBtns.forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          const queueName = btn.getAttribute("data-queue");
+          if (queueName) {
+            this.navigate("dlq", { queue: queueName });
+          }
+        });
+      });
+
+      const overviewJobBtns = document.querySelectorAll(".overview-job-btn");
+      overviewJobBtns.forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          const queueName = btn.getAttribute("data-queue");
+          if (queueName) {
+            this.navigate("job", { queue: queueName });
+          }
+        });
+      });
 
       // Retry overview button (initial error state)
       const retryOverviewBtn = document.getElementById("retry-overview-btn");
@@ -631,7 +747,6 @@
           this.fetchQueues();
         });
       }
-
 
       // Overview table "View DLQ" badges
       const dlqLinks = document.querySelectorAll(".view-dlq-link");
@@ -907,12 +1022,24 @@
 
       if (raw.startsWith("dlq/")) {
         view = "dlq";
-        queueParam = decodeURIComponent(raw.slice(4));
+        try {
+          queueParam = decodeURIComponent(raw.slice(4));
+        } catch {
+          queueParam = raw.slice(4);
+        }
       } else if (raw.startsWith("job/")) {
         view = "job";
         const parts = raw.slice(4).split("/");
-        queueParam = decodeURIComponent(parts[0] || "");
-        jobIdParam = decodeURIComponent(parts.slice(1).join("/") || "");
+        try {
+          queueParam = decodeURIComponent(parts[0] || "");
+        } catch {
+          queueParam = parts[0] || "";
+        }
+        try {
+          jobIdParam = decodeURIComponent(parts.slice(1).join("/") || "");
+        } catch {
+          jobIdParam = parts.slice(1).join("/") || "";
+        }
       } else if (raw.includes("?")) {
         const [viewPart, queryPart] = raw.split("?");
         view = viewPart;

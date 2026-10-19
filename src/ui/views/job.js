@@ -156,9 +156,38 @@ function renderJobCompatibilityWarning(queueName) {
   `;
 }
 
+function getJobDiagnosticInfo(error, queueName, jobId) {
+  const code = error?.code || (error?.status === 404 ? "JOB_NOT_FOUND" : error?.status === 503 ? "QUEUE_CLOSED" : error?.status === 501 ? "NOT_SUPPORTED" : "INTERNAL_ERROR");
+  let guidance = "Check host server logs and verify Redis connectivity.";
+
+  switch (code) {
+    case "QUEUE_CLOSED":
+      guidance = "The target queue instance has been closed via queue.close(). Operations are suspended until the application restarts the queue.";
+      break;
+    case "NOT_SUPPORTED":
+      guidance = "The installed version of @mayurbhusare/resilient-queue does not expose getJob(). Upgrade to a compatible core package release.";
+      break;
+    case "JOB_NOT_FOUND":
+      guidance = "Verify that the Job ID is correct. If the job was recently completed or failed, verify retention settings (removeOnComplete / removeOnFail).";
+      break;
+    case "QUEUE_NOT_FOUND":
+      guidance = `Queue '${queueName || "unknown"}' is not registered with the dashboard adapter. Check your server adapter configuration.`;
+      break;
+    case "VALIDATION_ERROR":
+      guidance = "Job ID must be a non-empty string. Verify search input parameters.";
+      break;
+    case "INTERNAL_ERROR":
+      guidance = "An internal error occurred while retrieving the job from Redis. Check Redis connectivity and server logs.";
+      break;
+  }
+
+  return { code, guidance };
+}
+
 function renderJobError(error, queueName, jobId) {
   const code = error?.code || "INTERNAL_ERROR";
   const message = error?.message || "Failed to retrieve job descriptor.";
+  const diag = getJobDiagnosticInfo(error, queueName, jobId);
 
   return `
     <div class="state-container error-state" role="alert" aria-live="assertive">
@@ -166,7 +195,13 @@ function renderJobError(error, queueName, jobId) {
       <span class="error-code-badge">${escapeHtml(code)}</span>
       <h3 class="state-title error-title">Failed to Inspect Job</h3>
       <p class="state-description">${escapeHtml(message)}</p>
-      <button type="button" class="btn btn-primary" id="job-retry-btn" aria-label="Retry inspecting job">
+      <div class="diagnostic-guidance" style="margin-top: 0.75rem; max-width: 540px; text-align: left;">
+        <div class="callout callout-warning">
+          <div class="callout-header"><span>Operational Diagnostic</span></div>
+          <div class="callout-body">${escapeHtml(diag.guidance)}</div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-primary" id="job-retry-btn" aria-label="Retry inspecting job" style="margin-top: 1rem;">
         <span>Retry</span>
       </button>
     </div>
@@ -481,7 +516,8 @@ const JobView = {
   renderCompatibilityWarning: renderJobCompatibilityWarning,
   renderError: renderJobError,
   renderJobDetails,
-  renderSearchToolbar: renderJobSearchToolbar
+  renderSearchToolbar: renderJobSearchToolbar,
+  getJobDiagnosticInfo
 };
 
 if (typeof module !== "undefined" && module.exports) {

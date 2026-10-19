@@ -134,6 +134,7 @@ When initializing the adapter:
 | `400` | Bad Request | Parameter validation failed (e.g. negative `start`, non-integer `limit`, invalid `order`, empty `jobId`). |
 | `404` | Not Found | Requested `queueName` is not in the explicit registry, or `jobId` does not exist or has expired. |
 | `500` | Internal Server Error | Unhandled Redis command failure or pipeline execution error. |
+| `501` | Not Implemented | Core method (e.g. `getJob`) is not implemented by the installed `@mayurbhusare/resilient-queue` version. |
 | `503` | Service Unavailable | Target `ResilientQueue` instance is closed (`queue.close()` was executed). |
 
 ### Closed Queue Detection Mechanism
@@ -164,6 +165,7 @@ Standard error codes:
 - `JOB_NOT_FOUND`: The `:jobId` was not found in Redis or expired according to retention policy.
 - `VALIDATION_ERROR`: One or more path/query parameters failed validation.
 - `QUEUE_CLOSED`: The queue instance has been closed via `queue.close()`.
+- `NOT_SUPPORTED`: Target core library release does not implement the requested method (e.g. `getJob()`).
 - `INTERNAL_ERROR`: Unexpected internal exception or Redis connection failure.
 
 ---
