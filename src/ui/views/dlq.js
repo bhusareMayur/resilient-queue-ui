@@ -161,10 +161,11 @@ function renderDLQError(error, queueName) {
   `;
 }
 
-function renderJobDetail(job, isCorrupted, queueName = null) {
+function renderJobDetail(job, isCorrupted, queueName = null, index = 0) {
+  const detailId = `dlq-job-detail-${index}`;
   if (isCorrupted) {
     return `
-      <div class="job-detail-box" role="region" aria-label="Corrupted Job Details">
+      <div id="${detailId}" class="job-detail-box" role="region" aria-label="Corrupted Job Details">
         <div class="callout callout-warning" style="margin-bottom: 0.75rem;">
           <div class="callout-header">
             <span>⚠️ Corrupted Payload Record</span>
@@ -175,7 +176,7 @@ function renderJobDetail(job, isCorrupted, queueName = null) {
           </div>
         </div>
         <div class="form-label" style="margin-bottom: 0.35rem;">Raw Unparsed Content:</div>
-        <pre class="job-payload-box"><code>${escapeHtml(job?.raw || "")}</code></pre>
+        <pre class="job-payload-box" tabindex="0" role="region" aria-label="Raw Unparsed Content"><code>${escapeHtml(job?.raw || "")}</code></pre>
       </div>
     `;
   }
@@ -191,7 +192,7 @@ function renderJobDetail(job, isCorrupted, queueName = null) {
   }
 
   return `
-    <div class="job-detail-box" role="region" aria-label="Job Diagnostics">
+    <div id="${detailId}" class="job-detail-box" role="region" aria-label="Job Diagnostics">
       <div class="job-detail-grid">
         <div class="detail-item">
           <span class="detail-label">Job ID</span>
@@ -232,7 +233,7 @@ function renderJobDetail(job, isCorrupted, queueName = null) {
 
       <div style="margin-top: 0.75rem;">
         <div class="detail-label">Job Data Payload:</div>
-        <pre class="job-payload-box"><code>${escapeHtml(dataFormatted)}</code></pre>
+        <pre class="job-payload-box" tabindex="0" role="region" aria-label="Job Data Payload"><code>${escapeHtml(dataFormatted)}</code></pre>
       </div>
 
       ${
@@ -303,6 +304,7 @@ function renderDLQTable(state) {
             class="btn btn-secondary btn-sm dlq-inspect-btn"
             data-job-index="${index}"
             aria-expanded="${isExpanded ? "true" : "false"}"
+            aria-controls="dlq-job-detail-${index}"
             aria-label="${isExpanded ? "Collapse job details" : "Inspect job details for " + escapeHtml(job?.id || "corrupted job")}"
           >
             ${actionText}
@@ -314,7 +316,7 @@ function renderDLQTable(state) {
           ? `
         <tr class="job-expanded-row">
           <td colspan="5" style="padding: 0;">
-            ${renderJobDetail(job, isCorrupted, state.selectedQueue)}
+            ${renderJobDetail(job, isCorrupted, state.selectedQueue, index)}
           </td>
         </tr>
       `

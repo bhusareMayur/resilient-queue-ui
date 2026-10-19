@@ -272,7 +272,7 @@ function renderJobDetails(job, queueName) {
               <span class="detail-label">Execution Progress</span>
               <span class="font-mono" style="font-weight: 600; color: var(--text-primary);">${progressClamped}%</span>
             </div>
-            <div class="progress-bar" role="progressbar" aria-valuenow="${progressClamped}" aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-bar" role="progressbar" aria-valuenow="${progressClamped}" aria-valuemin="0" aria-valuemax="100" aria-label="Job execution progress: ${progressClamped}%">
               <div class="progress-fill" style="width: ${progressClamped}%;"></div>
             </div>
           </div>
@@ -393,7 +393,7 @@ function renderJobDetails(job, queueName) {
 
         <div style="margin-top: 1.25rem;">
           <div class="detail-label">Job Payload (Data):</div>
-          <pre class="job-payload-box"><code>${escapeHtml(formatJson(job?.data))}</code></pre>
+          <pre class="job-payload-box" tabindex="0" role="region" aria-label="Job Payload Data"><code>${escapeHtml(formatJson(job?.data))}</code></pre>
         </div>
 
         ${
@@ -401,7 +401,7 @@ function renderJobDetails(job, queueName) {
             ? `
           <div style="margin-top: 1.25rem;">
             <div class="detail-label">Result (Return Value):</div>
-            <pre class="job-payload-box"><code>${escapeHtml(formatJson(resultValue))}</code></pre>
+            <pre class="job-payload-box" tabindex="0" role="region" aria-label="Job Return Value"><code>${escapeHtml(formatJson(resultValue))}</code></pre>
           </div>
         `
             : ""

@@ -103,6 +103,8 @@
       this._inFlightQueuesCount = 0;
       this._currentQueuesPromise = null;
       this._boundBeforeUnload = null;
+      this._boundMobileKeydown = null;
+      this._announceTimer = null;
       this._isDestroyed = false;
 
       this.viewTitles = {
@@ -240,12 +242,48 @@
     destroy() {
       this._isDestroyed = true;
       this.stopPolling();
+      if (this._announceTimer) {
+        clearTimeout(this._announceTimer);
+        this._announceTimer = null;
+      }
       if (typeof window !== "undefined") {
         if (this._boundBeforeUnload) {
           window.removeEventListener("beforeunload", this._boundBeforeUnload);
           window.removeEventListener("pagehide", this._boundBeforeUnload);
           this._boundBeforeUnload = null;
         }
+      }
+      if (typeof document !== "undefined" && typeof document.removeEventListener === "function" && this._boundMobileKeydown) {
+        document.removeEventListener("keydown", this._boundMobileKeydown);
+        this._boundMobileKeydown = null;
+      }
+    }
+
+    /**
+     * Emits accessible, discrete screen-reader announcements to #live-announcer.
+     *
+     * @param {string} message Text to announce to assistive technologies
+     */
+    announce(message) {
+      if (typeof document === "undefined" || !message || this._isDestroyed) return;
+      const announcer = document.getElementById("live-announcer");
+      if (!announcer) return;
+
+      if (this._announceTimer) {
+        clearTimeout(this._announceTimer);
+        this._announceTimer = null;
+      }
+
+      announcer.textContent = "";
+      this._announceTimer = setTimeout(() => {
+        this._announceTimer = null;
+        if (!this._isDestroyed && announcer) {
+          announcer.textContent = message;
+        }
+      }, 50);
+
+      if (this._announceTimer && typeof this._announceTimer.unref === "function") {
+        this._announceTimer.unref();
       }
     }
 
@@ -295,6 +333,7 @@
           this.state.syncError = null;
           this.state.lastUpdated = new Date();
           this.updateStatusIndicator("online", `Connected (${this.state.queues.length} queues)`);
+          this.announce(isAutoRefresh ? "Queue metrics updated" : `Loaded ${this.state.queues.length} registered queues`);
 
           // If on DLQ view without selected queue, pick a candidate (initial or manual load only, not auto-refresh)
           if (!isAutoRefresh && this.state.activeView === "dlq" && !this.state.dlq.selectedQueue && this.state.queues.length > 0) {
@@ -324,6 +363,7 @@
           } else {
             this.updateStatusIndicator("offline", "API Error");
           }
+          this.announce(`Failed to retrieve queues: ${err.message || "API Error"}`);
         } finally {
           this._inFlightQueuesCount = Math.max(0, (this._inFlightQueuesCount || 1) - 1);
           if (this._inFlightQueuesCount === 0) {
@@ -381,6 +421,7 @@
         this.state.dlq.start = typeof response?.start === "number" ? response.start : this.state.dlq.start;
         this.state.dlq.limit = typeof response?.limit === "number" ? response.limit : this.state.dlq.limit;
         this.state.dlq.order = response?.order || this.state.dlq.order;
+        this.announce(`Loaded ${this.state.dlq.jobs.length} failed jobs for queue ${requestedQueue}`);
       } catch (err) {
         if (
           this._isDestroyed ||
@@ -393,6 +434,7 @@
         this.state.dlq.loading = false;
         this.state.dlq.error = err;
         this.state.dlq.jobs = [];
+        this.announce(`Failed to retrieve DLQ jobs for queue ${requestedQueue}`);
       }
 
       if (!this._isDestroyed && this.state.activeView === "dlq") {
@@ -452,6 +494,7 @@
         this.state.job.loading = false;
         this.state.job.job = response?.job || null;
         this.state.job.error = null;
+        this.announce(`Loaded job details for ${trimmedJobId}`);
       } catch (err) {
         if (
           this._isDestroyed ||
@@ -465,6 +508,7 @@
         this.state.job.loading = false;
         this.state.job.job = null;
         this.state.job.error = err;
+        this.announce(`Job lookup failed for ${trimmedJobId}`);
       }
 
       if (!this._isDestroyed && this.state.activeView === "job") {
@@ -558,7 +602,16 @@
 
       this.updateNavigationUI();
       this.renderView();
-      this.closeMobileSidebar();
+      this.closeMobileSidebar(false);
+
+      if (typeof document !== "undefined") {
+        const container = document.getElementById(this.containerId);
+        if (container && typeof container.focus === "function") {
+          container.focus();
+        }
+      }
+
+      this.announce(`Navigated to ${this.viewTitles[this.state.activeView] || this.state.activeView}`);
     }
 
     /**
@@ -594,18 +647,51 @@
       const container = document.getElementById(this.containerId);
       if (!container) return;
 
-      const activeElementId = document.activeElement ? document.activeElement.id : null;
+      const wasInsideContainer = Boolean(
+        container &&
+          document.activeElement &&
+          document.activeElement !== document.body &&
+          document.activeElement !== container &&
+          (typeof container.contains === "function" ? container.contains(document.activeElement) : true)
+      );
+
+      const activeElementId = wasInsideContainer && document.activeElement ? document.activeElement.id : null;
       const cursorStart =
-        activeElementId === "overview-search-input" && typeof document.activeElement.selectionStart === "number"
+        wasInsideContainer &&
+        activeElementId === "overview-search-input" &&
+        typeof document.activeElement.selectionStart === "number"
           ? document.activeElement.selectionStart
           : null;
       const cursorEnd =
-        activeElementId === "overview-search-input" && typeof document.activeElement.selectionEnd === "number"
+        wasInsideContainer &&
+        activeElementId === "overview-search-input" &&
+        typeof document.activeElement.selectionEnd === "number"
           ? document.activeElement.selectionEnd
           : null;
-      const activeJobIndex = document.activeElement && document.activeElement.classList?.contains("dlq-inspect-btn")
-        ? document.activeElement.getAttribute("data-job-index")
-        : null;
+      const activeSortKey =
+        wasInsideContainer &&
+        document.activeElement &&
+        document.activeElement.classList?.contains("sort-header-btn")
+          ? document.activeElement.getAttribute("data-sort-key")
+          : null;
+      const activeJobIndex =
+        wasInsideContainer &&
+        document.activeElement &&
+        document.activeElement.classList?.contains("dlq-inspect-btn")
+          ? document.activeElement.getAttribute("data-job-index")
+          : null;
+      const activeQueueDlqBtn =
+        wasInsideContainer &&
+        document.activeElement &&
+        document.activeElement.classList?.contains("overview-dlq-btn")
+          ? document.activeElement.getAttribute("data-queue")
+          : null;
+      const activeQueueJobBtn =
+        wasInsideContainer &&
+        document.activeElement &&
+        document.activeElement.classList?.contains("overview-job-btn")
+          ? document.activeElement.getAttribute("data-queue")
+          : null;
 
       let html = "";
 
@@ -636,23 +722,60 @@
       container.innerHTML = html;
       this.bindViewEvents();
 
-      // Restore active focus and cursor position if the element was re-rendered
-      if (activeElementId) {
-        const el = document.getElementById(activeElementId);
-        if (el && typeof el.focus === "function") {
-          el.focus();
-          if (cursorStart !== null && typeof el.setSelectionRange === "function") {
+      // Restore active focus and cursor position if the element was re-rendered inside container
+      if (wasInsideContainer) {
+        if (activeElementId) {
+          const el = document.getElementById(activeElementId);
+          if (el && typeof el.focus === "function") {
             try {
-              el.setSelectionRange(cursorStart, cursorEnd);
+              el.focus({ preventScroll: true });
             } catch {
-              // ignore
+              el.focus();
+            }
+            if (cursorStart !== null && typeof el.setSelectionRange === "function") {
+              try {
+                el.setSelectionRange(cursorStart, cursorEnd);
+              } catch {
+                // ignore
+              }
             }
           }
-        }
-      } else if (activeJobIndex !== null) {
-        const el = document.querySelector(`.dlq-inspect-btn[data-job-index="${activeJobIndex}"]`);
-        if (el && typeof el.focus === "function") {
-          el.focus();
+        } else if (activeSortKey) {
+          const el = document.querySelector(`.sort-header-btn[data-sort-key="${activeSortKey}"]`);
+          if (el && typeof el.focus === "function") {
+            try {
+              el.focus({ preventScroll: true });
+            } catch {
+              el.focus();
+            }
+          }
+        } else if (activeJobIndex !== null) {
+          const el = document.querySelector(`.dlq-inspect-btn[data-job-index="${activeJobIndex}"]`);
+          if (el && typeof el.focus === "function") {
+            try {
+              el.focus({ preventScroll: true });
+            } catch {
+              el.focus();
+            }
+          }
+        } else if (activeQueueDlqBtn) {
+          const el = document.querySelector(`.overview-dlq-btn[data-queue="${activeQueueDlqBtn}"]`);
+          if (el && typeof el.focus === "function") {
+            try {
+              el.focus({ preventScroll: true });
+            } catch {
+              el.focus();
+            }
+          }
+        } else if (activeQueueJobBtn) {
+          const el = document.querySelector(`.overview-job-btn[data-queue="${activeQueueJobBtn}"]`);
+          if (el && typeof el.focus === "function") {
+            try {
+              el.focus({ preventScroll: true });
+            } catch {
+              el.focus();
+            }
+          }
         }
       }
     }
@@ -954,40 +1077,86 @@
         toggle.addEventListener("click", () => {
           const isOpen = sidebar.classList.contains("open");
           if (isOpen) {
-            this.closeMobileSidebar();
+            this.closeMobileSidebar(true);
           } else {
             sidebar.classList.add("open");
             toggle.setAttribute("aria-expanded", "true");
             if (backdrop) backdrop.classList.add("open");
+            const firstNav = sidebar.querySelector(".nav-link");
+            if (firstNav && typeof firstNav.focus === "function") {
+              firstNav.focus();
+            }
           }
         });
       }
 
       if (backdrop) {
         backdrop.addEventListener("click", () => {
-          this.closeMobileSidebar();
+          this.closeMobileSidebar(true);
         });
       }
 
-      // Escape key to close mobile menu
-      if (typeof document.addEventListener === "function") {
-        document.addEventListener("keydown", (e) => {
+      // Escape key to close mobile menu, and Tab trap while open
+      if (typeof document !== "undefined") {
+        if (this._boundMobileKeydown && typeof document.removeEventListener === "function") {
+          document.removeEventListener("keydown", this._boundMobileKeydown);
+          this._boundMobileKeydown = null;
+        }
+
+        this._boundMobileKeydown = (e) => {
+          if (this._isDestroyed) return;
+          const isOpen = sidebar && sidebar.classList.contains("open");
+          if (!isOpen) return;
+
           if (e.key === "Escape") {
-            this.closeMobileSidebar();
+            e.preventDefault();
+            this.closeMobileSidebar(true);
+          } else if (e.key === "Tab") {
+            const focusable = sidebar.querySelectorAll(
+              'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            );
+            if (!focusable || focusable.length === 0) return;
+            const firstEl = focusable[0];
+            const lastEl = focusable[focusable.length - 1];
+
+            if (e.shiftKey) {
+              if (document.activeElement === firstEl || !sidebar.contains(document.activeElement)) {
+                e.preventDefault();
+                if (lastEl && typeof lastEl.focus === "function") lastEl.focus();
+              }
+            } else {
+              if (document.activeElement === lastEl || !sidebar.contains(document.activeElement)) {
+                e.preventDefault();
+                if (firstEl && typeof firstEl.focus === "function") firstEl.focus();
+              }
+            }
           }
-        });
+        };
+
+        if (typeof document.addEventListener === "function") {
+          document.addEventListener("keydown", this._boundMobileKeydown);
+        }
       }
     }
 
-    closeMobileSidebar() {
+    closeMobileSidebar(restoreFocus = false) {
       if (typeof document === "undefined") return;
       const sidebar = document.getElementById("sidebar");
       const toggle = document.getElementById("mobile-toggle-btn");
       const backdrop = document.getElementById("mobile-backdrop");
 
+      const wasOpen = sidebar && sidebar.classList.contains("open");
       if (sidebar) sidebar.classList.remove("open");
       if (toggle) toggle.setAttribute("aria-expanded", "false");
       if (backdrop) backdrop.classList.remove("open");
+
+      if (wasOpen && restoreFocus && toggle && typeof toggle.focus === "function") {
+        try {
+          toggle.focus({ preventScroll: true });
+        } catch {
+          toggle.focus();
+        }
+      }
     }
 
     /**

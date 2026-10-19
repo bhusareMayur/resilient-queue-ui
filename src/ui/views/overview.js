@@ -166,16 +166,16 @@ function renderStatusBadge(q) {
   const status = getQueueStatus(q);
   switch (status) {
     case "closed":
-      return `<span class="badge badge-closed" aria-label="Status: Closed">Closed</span>`;
+      return `<span class="badge badge-closed" role="status" aria-label="Status: Closed"><span aria-hidden="true">■</span> Closed</span>`;
     case "error":
-      return `<span class="badge badge-error" aria-label="Status: Error">Error</span>`;
+      return `<span class="badge badge-error" role="status" aria-label="Status: Error"><span aria-hidden="true">⚠️</span> Error</span>`;
     case "unavailable":
-      return `<span class="badge badge-unavailable" aria-label="Status: Unavailable">Unavailable</span>`;
+      return `<span class="badge badge-unavailable" role="status" aria-label="Status: Unavailable"><span aria-hidden="true">—</span> Unavailable</span>`;
     case "paused":
-      return `<span class="badge badge-paused" aria-label="Status: Paused">Paused</span>`;
+      return `<span class="badge badge-paused" role="status" aria-label="Status: Paused"><span aria-hidden="true">⏸</span> Paused</span>`;
     case "active":
     default:
-      return `<span class="badge badge-active" aria-label="Status: Active">Active</span>`;
+      return `<span class="badge badge-active" role="status" aria-label="Status: Active"><span aria-hidden="true">●</span> Active</span>`;
   }
 }
 

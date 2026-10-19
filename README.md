@@ -109,6 +109,14 @@ The package includes a built-in, lightweight administration dashboard served dir
   - **Job Inspector**: Comprehensive job inspection view supporting lookups by queue and job ID (`GET /api/queues/:queueName/jobs/:jobId`), displaying execution state badges, progress bar, lifecycle timestamps, failure diagnostics, input data payloads, and return values.
 - **Operational Diagnostics**: Actionable, structured guidance for known API error codes (`QUEUE_CLOSED`, `QUEUE_NOT_FOUND`, `JOB_NOT_FOUND`, `NOT_SUPPORTED`, `VALIDATION_ERROR`, `INTERNAL_ERROR`), clearly distinguishing core library version compatibility disclosures from missing queues, closed queue instances, and server errors.
 - **Robust UI States**: Handles loading spinners, empty states (with server configuration snippets), empty search filter states, and temporary sync failure banners with cached queue retention.
+- **Accessibility & Keyboard Usability**:
+  - **Full Keyboard Operability**: Complete keyboard accessibility across search filters, sort headers, drawer navigation, and table actions with high-contrast `:focus-visible` focus rings.
+  - **Skip to Main Content**: Accessible skip link (`#content-container`) enables assistive technology users to bypass repetitive navigation.
+  - **Discrete Screen-Reader Announcements**: Dedicated polite ARIA live announcer (`#live-announcer`) provides non-intrusive status updates during navigation and metric refreshes without DOM chattering.
+  - **Color-Independent Status**: Badges pair semantic colors with distinct visual glyphs (`●`, `⏸`, `■`, `⚠️`, `—`) and explicit ARIA labels so status is never conveyed by color alone.
+  - **Mobile Drawer Usability**: Includes focus trapping inside the mobile navigation menu, backdrop tap-to-dismiss, and Escape key dismissal with focus restoration to the trigger button.
+  - **Focus & Cursor Preservation**: Preserves active focus, input text, and cursor selection ranges across background metric auto-refresh cycles.
+  - **Reduced Motion Support**: Honored via `@media (prefers-reduced-motion: reduce)` to freeze animated spinners and disable non-essential transitions.
 - **Zero External Frontend Dependencies**: Pure semantic HTML5, modern CSS3 with CSS variables, and modular vanilla JavaScript.
 
 ### Reusable Frontend API Client
