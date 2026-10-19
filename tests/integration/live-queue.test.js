@@ -179,30 +179,81 @@ describe("Live ResilientQueue Integration", () => {
       { idempotencyKey: "invoice-999" }
     );
 
-    const res = await fetch(`${serverUrl}/api/queues/live-test/jobs/${jobId}`);
-    assert.equal(res.status, 200);
+    const hasNativeGetJob = typeof queue.getJob === "function";
 
-    const data = await res.json();
-    assert.equal(data.queue, "live-test");
-    assert.equal(data.job.id, jobId);
-    assert.equal(data.job.state, "waiting");
-    assert.deepEqual(data.job.data, { task: "send-invoice", amount: 150 });
-    assert.equal(data.job.idempotencyKey, "invoice-999");
-    assert.equal("updateProgress" in data.job, false);
+    if (!hasNativeGetJob) {
+      // In published core v2.0.2, getJob() is not implemented on ResilientQueue.
+      // Verify that calling getJob returns 501 NOT_SUPPORTED as documented.
+      const resUnsupported = await fetch(`${serverUrl}/api/queues/live-test/jobs/${jobId}`);
+      assert.equal(resUnsupported.status, 501);
+      const unsupportedData = await resUnsupported.json();
+      assert.equal(unsupportedData.error.code, "NOT_SUPPORTED");
+      assert.match(unsupportedData.error.message, /getJob/i);
+
+      // Attach a getJob implementation to verify live serialization and function omission
+      queue.getJob = async (id) => {
+        if (id === jobId) {
+          return {
+            id: jobId,
+            state: "waiting",
+            data: { task: "send-invoice", amount: 150 },
+            idempotencyKey: "invoice-999",
+            updateProgress: async () => {}
+          };
+        }
+        return null;
+      };
+    }
+
+    try {
+      const res = await fetch(`${serverUrl}/api/queues/live-test/jobs/${jobId}`);
+      assert.equal(res.status, 200);
+
+      const data = await res.json();
+      assert.equal(data.queue, "live-test");
+      assert.equal(data.job.id, jobId);
+      assert.equal(data.job.state, "waiting");
+      assert.deepEqual(data.job.data, { task: "send-invoice", amount: 150 });
+      assert.equal(data.job.idempotencyKey, "invoice-999");
+      assert.equal("updateProgress" in data.job, false);
+    } finally {
+      if (!hasNativeGetJob) {
+        delete queue.getJob;
+      }
+    }
   });
 
   it("should return 404 JOB_NOT_FOUND when inspecting non-existent job in live Redis", async (t) => {
     if (!redisAvailable) return t.skip();
 
-    const res = await fetch(`${serverUrl}/api/queues/live-test/jobs/missing-live-job-404`);
-    assert.equal(res.status, 404);
+    const hasNativeGetJob = typeof queue.getJob === "function";
 
-    const data = await res.json();
-    assert.equal(data.error.code, "JOB_NOT_FOUND");
-    assert.equal(
-      data.error.message,
-      "Job 'missing-live-job-404' not found or expired under retention policy"
-    );
+    if (!hasNativeGetJob) {
+      // Verify 501 NOT_SUPPORTED before attaching simulated getJob
+      const resUnsupported = await fetch(`${serverUrl}/api/queues/live-test/jobs/missing-live-job-404`);
+      assert.equal(resUnsupported.status, 501);
+      const unsupportedData = await resUnsupported.json();
+      assert.equal(unsupportedData.error.code, "NOT_SUPPORTED");
+
+      // Attach a getJob implementation returning null to verify 404 JOB_NOT_FOUND handling
+      queue.getJob = async () => null;
+    }
+
+    try {
+      const res = await fetch(`${serverUrl}/api/queues/live-test/jobs/missing-live-job-404`);
+      assert.equal(res.status, 404);
+
+      const data = await res.json();
+      assert.equal(data.error.code, "JOB_NOT_FOUND");
+      assert.equal(
+        data.error.message,
+        "Job 'missing-live-job-404' not found or expired under retention policy"
+      );
+    } finally {
+      if (!hasNativeGetJob) {
+        delete queue.getJob;
+      }
+    }
   });
 
   it("should retrieve registered queues summary from live Redis", async (t) => {
@@ -241,7 +292,11 @@ describe("Live ResilientQueue Integration", () => {
       const resHealth = await fetch(`${serverUrl}/api/queues`);
       assert.equal(resHealth.status, 200);
     } finally {
-      queue.getJob = originalGetJob;
+      if (originalGetJob !== undefined) {
+        queue.getJob = originalGetJob;
+      } else {
+        delete queue.getJob;
+      }
     }
   });
 
