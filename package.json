@@ -44,7 +44,9 @@
     "test": "node --test",
     "test:frontend": "node --test tests/unit/api-client.test.js tests/unit/ui-components.test.js",
     "test:unit": "node --test tests/unit/*.test.js",
-    "test:integration": "node --test tests/integration/*.test.js"
+    "test:integration": "node --test tests/integration/*.test.js",
+    "test:browser": "node --test tests/e2e/*.test.js",
+    "test:e2e": "node --test tests/e2e/*.test.js"
   },
   "peerDependencies": {
     "@mayurbhusare/resilient-queue": "^2.0.0"
