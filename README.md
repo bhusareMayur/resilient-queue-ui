@@ -31,19 +31,20 @@ yarn add @mayurbhusare/resilient-queue-ui @mayurbhusare/resilient-queue
 pnpm add @mayurbhusare/resilient-queue-ui @mayurbhusare/resilient-queue
 ```
 
-### Peer Dependency Requirements
+### Runtime & Peer Dependency Requirements
 
-| Package | Supported Version Range |
+| Requirement | Supported Version Range |
 | :--- | :--- |
+| **Node.js** | `>=18.0.0` (LTS 18, 20, 22) |
 | [`@mayurbhusare/resilient-queue`](https://www.npmjs.com/package/@mayurbhusare/resilient-queue) | `^2.0.0` |
 
 ---
 
-## Planned Integration Examples
+## Integration Examples
 
 The package is designed with a decoupled architecture where core dashboard dispatchers are wrapped by lightweight framework adapters.
 
-### 1. Express Integration (Planned)
+### 1. Express Integration
 
 ```javascript
 const express = require("express");
@@ -74,7 +75,7 @@ app.listen(3000, () => {
 });
 ```
 
-### 2. Fastify Integration (Planned)
+### 2. Fastify Integration
 
 ```javascript
 const fastify = require("fastify")();
