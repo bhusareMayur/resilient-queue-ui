@@ -166,9 +166,15 @@ npm run test:integration
 > **Host Authentication & Authorization Required**:  
 > Job payloads (`job.data`), execution results (`job.result`), and error diagnostics (`job.failureReason`) may contain sensitive user information, credentials, financial details, or internal system errors.
 
-1. **No Built-in Authentication**: The dashboard package is deliberately unauthenticated to avoid imposing opinions on your application's security stack.
-2. **Apply Authentication Barriers**: Always mount the dashboard routes behind your application's existing authentication and role-based access control (RBAC) middleware (e.g., Express Passport/sessions, Fastify JWT, or reverse-proxy authentication like OAuth2-Proxy / Cloudflare Access).
-3. **Never Expose Publicly**: Never mount `@mayurbhusare/resilient-queue-ui` routes on an unauthenticated, publicly accessible endpoint.
+1. **No Built-in Authentication or Authorization**: The package provides zero built-in authentication, user models, or permission schemes. Host applications **must** guard both static UI routes and `/api/*` endpoints with authentication middleware.
+2. **Apply Authentication Barriers**: Protect all dashboard routes behind your application's existing authentication stack (e.g., Express sessions/JWT, Fastify `preHandler` hooks, or reverse-proxy authentication such as OAuth2-Proxy / Cloudflare Access / AWS ALB).
+3. **Queue-Level Authorization**: If different teams or tenants share the same service, apply queue-level authorization in host middleware to restrict specific queues by user role.
+4. **CORS is NOT Authentication**: Permissive CORS headers (e.g. `Access-Control-Allow-Origin: *`) do **not** protect or authenticate endpoints. Never enable unauthenticated cross-origin access to dashboard routes.
+5. **Caching Protection**: All API endpoints emit `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` to prevent proxy or browser caching of sensitive job data.
+6. **Credential Redaction**: Internal Redis and database connection URIs (e.g., `redis://user:pass@host:port`) and auth tokens in 500 internal error responses are automatically scrubbed and redacted to `[redacted]`.
+7. **Never Expose Publicly**: Never mount `@mayurbhusare/resilient-queue-ui` routes on an unauthenticated, publicly accessible endpoint. Bind management processes to private VPC networks or loopback interfaces where possible.
+
+For full architectural details, threat models, Express and Fastify integration patterns, and the production checklist, see the [Security Guide (docs/security.md)](./docs/security.md) and runnable [Examples (examples/)](./examples/README.md).
 
 ---
 

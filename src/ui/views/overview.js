@@ -62,6 +62,25 @@ function getQueueStatus(q) {
   return "active";
 }
 
+function sanitizeUiErrorMessage(msg) {
+  if (typeof msg !== "string" || msg.trim().length === 0) {
+    return "Failed to communicate with dashboard API.";
+  }
+  let cleaned = msg.replace(
+    /\b([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)(?:[^:\s/@]+:)?([^@\s/]+)@/g,
+    "$1[redacted]@"
+  );
+  cleaned = cleaned.replace(
+    /\b(AUTH|Bearer)\s+['"]?[^\s'";&]+['"]?/gi,
+    "$1 [redacted]"
+  );
+  cleaned = cleaned.replace(
+    /\b(password|passwd|pwd|token|secret|apikey|api_key)(\s*[:=]\s*)['"]?[^\s'";&]+['"]?/gi,
+    "$1$2[redacted]"
+  );
+  return cleaned;
+}
+
 /**
  * Produces actionable operational diagnostics for API error responses.
  *
@@ -74,7 +93,7 @@ function getDiagnosticInfo(error) {
   const rawMessage = error?.message || "Failed to communicate with dashboard API.";
 
   let title = "Failed to Load Queues";
-  let description = rawMessage;
+  let description = sanitizeUiErrorMessage(rawMessage);
   let guidance = "Check the host application logs and verify that the dashboard adapter is properly configured.";
   let category = "error";
 
@@ -638,7 +657,8 @@ const OverviewView = {
   getDiagnosticInfo,
   filterQueues,
   sortQueues,
-  getMetricValue
+  getMetricValue,
+  sanitizeUiErrorMessage
 };
 
 if (typeof module !== "undefined" && module.exports) {

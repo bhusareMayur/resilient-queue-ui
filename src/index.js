@@ -14,7 +14,8 @@ const {
   DashboardDispatcher,
   createDashboardDispatcher,
   createErrorResponse,
-  parseDLQQueryParams
+  parseDLQQueryParams,
+  sanitizeErrorMessage
 } = require("./dispatcher");
 const { createExpressAdapter } = require("./adapters/express");
 const { fastifyDashboardPlugin } = require("./adapters/fastify");
@@ -37,6 +38,7 @@ module.exports = {
   fastifyDashboardPlugin,
   createErrorResponse,
   parseDLQQueryParams,
+  sanitizeErrorMessage,
   ApiClient,
   ApiError
 };
