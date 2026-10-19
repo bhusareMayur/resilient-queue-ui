@@ -222,6 +222,29 @@ describe("Live ResilientQueue Integration", () => {
     assert.equal(typeof data.queues[0].metrics.dlq, "number");
   });
 
+  it("should return 501 NOT_SUPPORTED when core queue lacks getJob() without crashing server", async (t) => {
+    if (!redisAvailable) return t.skip();
+
+    // Shadow getJob on the live ResilientQueue instance to simulate core environments lacking getJob
+    const originalGetJob = queue.getJob;
+    queue.getJob = undefined;
+
+    try {
+      const res = await fetch(`${serverUrl}/api/queues/live-test/jobs/job-without-core-support`);
+      assert.equal(res.status, 501);
+
+      const data = await res.json();
+      assert.equal(data.error.code, "NOT_SUPPORTED");
+      assert.match(data.error.message, /getJob/i);
+
+      // Verify server is healthy and responds to subsequent requests
+      const resHealth = await fetch(`${serverUrl}/api/queues`);
+      assert.equal(resHealth.status, 200);
+    } finally {
+      queue.getJob = originalGetJob;
+    }
+  });
+
   it("should return 503 QUEUE_CLOSED after queue is closed for queues summary, metrics, DLQ, and job inspection", async (t) => {
     if (!redisAvailable) return t.skip();
 

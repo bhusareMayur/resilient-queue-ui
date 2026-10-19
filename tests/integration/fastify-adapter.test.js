@@ -17,6 +17,22 @@ class MockFastify {
     this.routes.set(path, { options, handler });
   }
 
+  register(plugin, options = {}) {
+    const prefix = options.prefix ? String(options.prefix).replace(/\/+$/, "") : "";
+    const subFastify = {
+      get: (path, opts, handler) => {
+        let fullPath = path;
+        if (prefix) {
+          fullPath = path === "/" ? prefix : `${prefix}/${path.replace(/^\/+/, "")}`;
+        }
+        this.get(fullPath, opts, handler);
+      }
+    };
+    return new Promise((resolve) => {
+      plugin(subFastify, options, resolve);
+    });
+  }
+
   async inject(path, params, query = {}) {
     const route = this.routes.get(path);
     if (!route) {
@@ -29,6 +45,16 @@ class MockFastify {
     const reply = {
       code(c) {
         statusCode = c;
+        return reply;
+      },
+      status(c) {
+        statusCode = c;
+        return reply;
+      },
+      type(t) {
+        return reply;
+      },
+      header(k, v) {
         return reply;
       },
       send(b) {
@@ -446,5 +472,94 @@ describe("Fastify Dashboard Plugin Integration", () => {
     const res = await fastify.inject("/styles.css");
     assert.equal(res.statusCode, 200);
     assert.match(res.body.toString(), /--sidebar-width/);
+  });
+
+  it("should serve all UI JavaScript assets and views in Fastify", async () => {
+    const fastify = new MockFastify();
+
+    await new Promise((resolve) => {
+      fastifyDashboardPlugin(
+        fastify,
+        {
+          queues: { orders: mockQueue }
+        },
+        resolve
+      );
+    });
+
+    const jsRoutes = [
+      "/app.js",
+      "/api-client.js",
+      "/views/overview.js",
+      "/views/dlq.js",
+      "/views/job.js",
+      "/ui/app.js",
+      "/ui/api-client.js",
+      "/ui/views/overview.js",
+      "/ui/views/dlq.js",
+      "/ui/views/job.js"
+    ];
+
+    for (const r of jsRoutes) {
+      const res = await fastify.inject(r);
+      assert.equal(res.statusCode, 200, `Expected 200 for ${r}`);
+      assert.ok(res.body, `Expected body for ${r}`);
+      assert.ok(res.body.length > 0, `Expected non-empty body for ${r}`);
+    }
+  });
+
+  it("should support Fastify registration under custom prefix (e.g. /admin/queues)", async () => {
+    const fastify = new MockFastify();
+
+    await fastify.register(fastifyDashboardPlugin, {
+      prefix: "/admin/queues",
+      queues: { orders: mockQueue }
+    });
+
+    // Root UI under prefix
+    const resRoot = await fastify.inject("/admin/queues");
+    assert.equal(resRoot.statusCode, 200);
+    assert.match(resRoot.body.toString(), /ResilientQueue Dashboard/);
+
+    // Static stylesheet under prefix
+    const resStyles = await fastify.inject("/admin/queues/styles.css");
+    assert.equal(resStyles.statusCode, 200);
+
+    // API queues under prefix
+    const resQueues = await fastify.inject("/admin/queues/api/queues");
+    assert.equal(resQueues.statusCode, 200);
+    assert.equal(resQueues.body.queues[0].name, "orders");
+
+    // API metrics under prefix
+    const resMetrics = await fastify.inject("/admin/queues/api/queues/:queueName/metrics", {
+      queueName: "orders"
+    });
+    assert.equal(resMetrics.statusCode, 200);
+    assert.equal(resMetrics.body.metrics.waiting, 42);
+
+    // API job inspection under prefix
+    const resJob = await fastify.inject("/admin/queues/api/queues/:queueName/jobs/:jobId", {
+      queueName: "orders",
+      jobId: "order-abc-123"
+    });
+    assert.equal(resJob.statusCode, 200);
+    assert.equal(resJob.body.job.id, "order-abc-123");
+  });
+
+  it("should return 404 for unmapped route injection in Fastify", async () => {
+    const fastify = new MockFastify();
+
+    await new Promise((resolve) => {
+      fastifyDashboardPlugin(
+        fastify,
+        {
+          queues: { orders: mockQueue }
+        },
+        resolve
+      );
+    });
+
+    const res = await fastify.inject("/non-existent-route-xyz");
+    assert.equal(res.statusCode, 404);
   });
 });
