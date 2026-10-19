@@ -89,6 +89,22 @@
             <span id="status-text">Connecting...</span>
           </div>
 
+          <div class="auto-refresh-wrapper" id="auto-refresh-wrapper">
+            <label for="poll-interval-select" class="visually-hidden">Auto-refresh Interval</label>
+            <select
+              id="poll-interval-select"
+              class="poll-select"
+              aria-label="Auto-refresh polling interval"
+            >
+              <option value="0">Off (Manual)</option>
+              <option value="2000">Every 2s</option>
+              <option value="5000" selected>Every 5s</option>
+              <option value="10000">Every 10s</option>
+              <option value="30000">Every 30s</option>
+              <option value="60000">Every 60s</option>
+            </select>
+          </div>
+
           <button
             type="button"
             class="btn btn-secondary btn-sm"

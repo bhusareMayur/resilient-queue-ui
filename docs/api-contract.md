@@ -529,3 +529,6 @@ The following limitations and open questions in the core library affect dashboar
    - *Impact*: Milestone 1 dashboard must rely on periodic polling of `getMetrics()` and `getDLQ()`. Real-time event streaming would require adding a Redis Pub/Sub layer in the core library.
 5. **No Queue Mutation Controls**:
    - `pause()`, `resume()`, `retryDLQJob()`, `retryAllDLQ()`, and `purgeDLQ()` are intentionally excluded from this read-only contract. A separate mutation contract will be created for Milestone 2.
+6. **No Historical Time-Series Metrics Persistence in Core v2.0.2**:
+   - `queue.getMetrics()` reports instantaneous point-in-time counts for `waiting`, `active`, `delayed`, and `dlq`. The core library does not aggregate, store, or expose time-series telemetry (such as throughput over time, processing latency percentiles, or failure rate trends).
+   - *Impact*: Dashboard monitoring reflects instantaneous live state via polling. Storing ephemeral samples in browser memory does not constitute durable server-side history. Full historical trend analysis and durable telemetry require an external time-series datastore or server-side metric persistence layer, reserved as a future requirement.
