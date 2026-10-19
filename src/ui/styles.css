@@ -14,7 +14,8 @@
   --border-subtle: #1e293b;
 
   --accent-blue: #38bdf8;
-  --accent-blue-hover: #0284c7;
+  --accent-blue-hover: #0369a1;
+  --accent-focus: #38bdf8;
   --accent-blue-subtle: rgba(56, 189, 248, 0.1);
 
   --status-active: #22c55e;
@@ -65,10 +66,38 @@ button {
   cursor: pointer;
 }
 
+/* Accessibility: Skip Navigation Link */
+.skip-link {
+  position: absolute;
+  top: -999px;
+  left: 1rem;
+  z-index: 1000;
+  padding: 0.6rem 1rem;
+  background-color: #0369a1;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: top 0.15s ease-in-out;
+}
+
+.skip-link:focus {
+  top: 1rem;
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
 /* Accessibility Focus States */
 :focus-visible {
   outline: 2px solid var(--accent-blue);
   outline-offset: 2px;
+}
+
+/* Container programmatic focus reset */
+.content-area:focus {
+  outline: none;
 }
 
 /* Dashboard Shell Layout */
@@ -302,7 +331,7 @@ button {
 }
 
 .btn-primary:hover {
-  background-color: #0369a1;
+  background-color: #075985;
 }
 
 /* Content Container */
@@ -430,21 +459,21 @@ button {
 
 .badge-active {
   background-color: var(--status-active-subtle);
-  color: var(--status-active);
+  color: #4ade80;
 }
 
 .badge-paused {
   background-color: var(--status-paused-subtle);
-  color: var(--status-paused);
+  color: #fbbf24;
 }
 
 .badge-dlq-clean {
-  color: var(--text-muted);
+  color: #94a3b8;
 }
 
 .badge-dlq-alert {
   background-color: var(--status-error-subtle);
-  color: var(--status-error);
+  color: #f87171;
   font-family: var(--font-mono);
   font-weight: 700;
   text-decoration: none;
@@ -452,17 +481,17 @@ button {
 
 .badge-completed {
   background-color: var(--status-active-subtle);
-  color: var(--status-active);
+  color: #4ade80;
 }
 
 .badge-failed {
   background-color: var(--status-error-subtle);
-  color: var(--status-error);
+  color: #f87171;
 }
 
 .badge-waiting {
   background-color: var(--bg-tertiary);
-  color: var(--text-secondary);
+  color: #cbd5e1;
 }
 
 .badge-delayed {
@@ -472,17 +501,17 @@ button {
 
 .badge-closed {
   background-color: var(--status-error-subtle);
-  color: var(--status-error);
+  color: #f87171;
 }
 
 .badge-unavailable {
   background-color: var(--bg-tertiary);
-  color: var(--text-muted);
+  color: #cbd5e1;
 }
 
 .badge-error {
   background-color: var(--status-error-subtle);
-  color: var(--status-error);
+  color: #f87171;
 }
 
 .metric-unavailable {
@@ -790,6 +819,7 @@ button {
   color: #fca5a5;
   margin-top: 0.25rem;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .job-payload-box {
@@ -800,9 +830,17 @@ button {
   font-family: var(--font-mono);
   font-size: 12px;
   max-height: 250px;
+  overflow-x: auto;
   overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
   color: var(--text-primary);
   margin-top: 0.25rem;
+}
+
+.job-payload-box:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
 }
 
 .callout-info {
@@ -1084,4 +1122,76 @@ button {
 
 .diagnostic-guidance .callout {
   margin: 0;
+}
+
+/* Responsive Enhancements for Narrow & Mobile Screens */
+@media (max-width: 600px) {
+  .top-bar {
+    padding: 0.5rem 0.75rem;
+    height: auto;
+    min-height: var(--header-height);
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .top-bar-left {
+    gap: 0.5rem;
+  }
+
+  .top-bar-actions {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .content-area {
+    padding: 0.75rem;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .job-detail-grid {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .overview-toolbar .form-group {
+    width: 100%;
+    min-width: 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .pagination-container {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    text-align: center;
+  }
+
+  .pagination-actions {
+    justify-content: center;
+  }
+}
+
+/* Reduced Motion Preference Support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .spinner {
+    animation: none !important;
+    border-top-color: var(--accent-blue) !important;
+    opacity: 0.85;
+  }
 }

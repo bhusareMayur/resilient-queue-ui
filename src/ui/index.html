@@ -8,9 +8,11 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
+  <a href="#content-container" class="skip-link">Skip to main content</a>
   <div class="mobile-backdrop" id="mobile-backdrop" aria-hidden="true"></div>
 
   <div class="app-container">
+    <div id="live-announcer" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
     <!-- Sidebar Navigation -->
     <aside class="sidebar" id="sidebar" aria-label="Dashboard Navigation">
       <div class="sidebar-header">
@@ -75,6 +77,7 @@
             class="mobile-toggle"
             id="mobile-toggle-btn"
             aria-label="Toggle navigation menu"
+            aria-haspopup="true"
             aria-expanded="false"
             aria-controls="sidebar"
           >
@@ -117,7 +120,7 @@
         </div>
       </header>
 
-      <main class="content-area" id="content-container" role="main" aria-live="polite">
+      <main class="content-area" id="content-container" role="main" tabindex="-1">
         <!-- Rendered dynamically by app.js -->
         <div class="state-container loading-state" role="status">
           <div class="spinner" aria-hidden="true"></div>

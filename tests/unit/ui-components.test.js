@@ -2097,4 +2097,595 @@ describe("UI Components & Views", () => {
       });
     });
   });
+
+  describe("Milestone 12: Accessibility, Keyboard Usability & Responsive Polish", () => {
+    describe("Skip Links, Live Regions & Landmarks", () => {
+      it("should include skip-to-content link targeting #content-container in index.html", () => {
+        const htmlPath = path.join(UI_DIR, "index.html");
+        const html = fs.readFileSync(htmlPath, "utf8");
+        assert.match(html, /<a\s+href="#content-container"\s+class="skip-link">Skip to main content<\/a>/);
+      });
+
+      it("should include dedicated live announcer with polite aria-live in index.html and remove redundant chatter from main", () => {
+        const htmlPath = path.join(UI_DIR, "index.html");
+        const html = fs.readFileSync(htmlPath, "utf8");
+        assert.match(html, /<div\s+id="live-announcer"\s+class="visually-hidden"\s+role="status"\s+aria-live="polite"\s+aria-atomic="true"><\/div>/);
+        assert.match(html, /<main class="content-area" id="content-container" role="main" tabindex="-1">/);
+        const mainMatch = html.match(/<main[^>]+>/);
+        assert.ok(mainMatch);
+        assert.doesNotMatch(mainMatch[0], /aria-live/);
+      });
+
+      it("should emit discrete live announcer updates via app.announce()", async () => {
+        let announcerText = "";
+        const fakeAnnouncer = {
+          get textContent() { return announcerText; },
+          set textContent(val) { announcerText = val; }
+        };
+
+        const originalDoc = global.document;
+        global.document = {
+          getElementById: (id) => (id === "live-announcer" ? fakeAnnouncer : null),
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          activeElement: null
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.announce("Queue metrics updated");
+          await new Promise((r) => setTimeout(r, 80));
+          assert.equal(announcerText, "Queue metrics updated");
+          app.destroy();
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+    });
+
+    describe("Accessible Status Badges & Color Independence", () => {
+      it("should render distinct visual glyphs and labels for all queue statuses", () => {
+        const queues = [
+          { name: "q-active", isPaused: false, metrics: { waiting: 0, active: 1, delayed: 0, dlq: 0 } },
+          { name: "q-paused", isPaused: true, metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 } },
+          { name: "q-closed", isClosed: true, metrics: null },
+          { name: "q-error", error: new Error("Redis timeout"), metrics: null },
+          { name: "q-unavailable", metrics: null }
+        ];
+
+        const html = OverviewView.renderData(queues);
+        // Active: ●
+        assert.match(html, /<span class="badge badge-active" role="status" aria-label="Status: Active"><span aria-hidden="true">●<\/span> Active<\/span>/);
+        // Paused: ⏸
+        assert.match(html, /<span class="badge badge-paused" role="status" aria-label="Status: Paused"><span aria-hidden="true">⏸<\/span> Paused<\/span>/);
+        // Closed: ■
+        assert.match(html, /<span class="badge badge-closed" role="status" aria-label="Status: Closed"><span aria-hidden="true">■<\/span> Closed<\/span>/);
+        // Error: ⚠️
+        assert.match(html, /<span class="badge badge-error" role="status" aria-label="Status: Error"><span aria-hidden="true">⚠️<\/span> Error<\/span>/);
+        // Unavailable: —
+        assert.match(html, /<span class="badge badge-unavailable" role="status" aria-label="Status: Unavailable"><span aria-hidden="true">—<\/span> Unavailable<\/span>/);
+      });
+    });
+
+    describe("Focus Preservation Across Auto-Refresh & Rerenders", () => {
+      it("should preserve search input focus and cursor selection range across renderView", () => {
+        const originalDoc = global.document;
+        let focusedEl = null;
+        let rangeSet = null;
+
+        const fakeSearchInput = {
+          id: "overview-search-input",
+          selectionStart: 4,
+          selectionEnd: 7,
+          focus: function() { focusedEl = this; },
+          setSelectionRange: function(s, e) { rangeSet = [s, e]; },
+          addEventListener: () => {},
+          getAttribute: () => null,
+          classList: { contains: () => false }
+        };
+
+        global.document = {
+          activeElement: fakeSearchInput,
+          getElementById: (id) => (id === "overview-search-input" ? fakeSearchInput : id === "content-container" ? { innerHTML: "" } : null),
+          querySelector: () => null,
+          querySelectorAll: () => []
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.state.activeView = "overview";
+          app.state.queues = [{ name: "email-queue", metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 } }];
+          app.renderView();
+
+          assert.equal(focusedEl, fakeSearchInput);
+          assert.deepEqual(rangeSet, [4, 7]);
+          app.destroy();
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+
+      it("should restore focus to active sort header button across renderView", () => {
+        const originalDoc = global.document;
+        let focusedEl = null;
+
+        const fakeSortBtn = {
+          id: null,
+          getAttribute: (attr) => (attr === "data-sort-key" ? "waiting" : null),
+          classList: { contains: (cls) => cls === "sort-header-btn" },
+          focus: function() { focusedEl = this; }
+        };
+
+        global.document = {
+          activeElement: fakeSortBtn,
+          getElementById: (id) => (id === "content-container" ? { innerHTML: "" } : null),
+          querySelector: (sel) => (sel.includes('[data-sort-key="waiting"]') ? fakeSortBtn : null),
+          querySelectorAll: () => []
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.state.activeView = "overview";
+          app.state.queues = [{ name: "email-queue", metrics: { waiting: 5, active: 0, delayed: 0, dlq: 0 } }];
+          app.renderView();
+
+          assert.equal(focusedEl, fakeSortBtn);
+          app.destroy();
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+
+      it("should restore focus to active DLQ row action button across renderView", () => {
+        const originalDoc = global.document;
+        let focusedEl = null;
+
+        const fakeDlqBtn = {
+          id: null,
+          getAttribute: (attr) => (attr === "data-queue" ? "billing-queue" : null),
+          classList: { contains: (cls) => cls === "overview-dlq-btn" },
+          focus: function() { focusedEl = this; }
+        };
+
+        global.document = {
+          activeElement: fakeDlqBtn,
+          getElementById: (id) => (id === "content-container" ? { innerHTML: "" } : null),
+          querySelector: (sel) => (sel.includes('[data-queue="billing-queue"]') ? fakeDlqBtn : null),
+          querySelectorAll: () => []
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.state.activeView = "overview";
+          app.state.queues = [{ name: "billing-queue", metrics: { waiting: 0, active: 0, delayed: 0, dlq: 3 } }];
+          app.renderView();
+
+          assert.equal(focusedEl, fakeDlqBtn);
+          app.destroy();
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+    });
+
+    describe("Mobile Navigation Drawer & Focus Trapping", () => {
+      it("should close mobile drawer on Escape and restore focus to #mobile-toggle-btn", () => {
+        const originalDoc = global.document;
+        let keydownHandler = null;
+        let toggleFocused = false;
+
+        const classListSet = new Set(["open"]);
+        const fakeSidebar = {
+          classList: {
+            contains: (c) => classListSet.has(c),
+            remove: (c) => classListSet.delete(c),
+            add: (c) => classListSet.add(c)
+          },
+          querySelectorAll: () => []
+        };
+
+        const fakeToggle = {
+          id: "mobile-toggle-btn",
+          setAttribute: (attr, val) => {},
+          focus: () => { toggleFocused = true; },
+          addEventListener: () => {}
+        };
+
+        const fakeBackdrop = {
+          classList: { remove: () => {}, add: () => {} },
+          addEventListener: () => {}
+        };
+
+        global.document = {
+          getElementById: (id) => {
+            if (id === "sidebar") return fakeSidebar;
+            if (id === "mobile-toggle-btn") return fakeToggle;
+            if (id === "mobile-backdrop") return fakeBackdrop;
+            return null;
+          },
+          addEventListener: (evt, handler) => {
+            if (evt === "keydown") keydownHandler = handler;
+          },
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          activeElement: null
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.bindMobileToggle();
+          assert.ok(typeof keydownHandler === "function");
+          assert.equal(fakeSidebar.classList.contains("open"), true);
+
+          // Trigger Escape key
+          let prevented = false;
+          keydownHandler({ key: "Escape", preventDefault: () => { prevented = true; } });
+
+          assert.equal(fakeSidebar.classList.contains("open"), false);
+          assert.equal(toggleFocused, true);
+          assert.equal(prevented, true);
+          app.destroy();
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+
+      it("should trap tab focus inside open mobile drawer", () => {
+        const originalDoc = global.document;
+        let keydownHandler = null;
+        let firstFocused = false;
+        let lastFocused = false;
+
+        const fakeFirstBtn = { focus: () => { firstFocused = true; } };
+        const fakeLastBtn = { focus: () => { lastFocused = true; } };
+
+        const classListSet = new Set(["open"]);
+        const fakeSidebar = {
+          classList: {
+            contains: (c) => classListSet.has(c)
+          },
+          contains: (el) => true,
+          querySelectorAll: () => [fakeFirstBtn, fakeLastBtn]
+        };
+
+        global.document = {
+          getElementById: (id) => (id === "sidebar" ? fakeSidebar : null),
+          addEventListener: (evt, handler) => {
+            if (evt === "keydown") keydownHandler = handler;
+          },
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          activeElement: fakeLastBtn
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.bindMobileToggle();
+          assert.ok(typeof keydownHandler === "function");
+
+          // Tab on last element wraps to first element
+          let prevented = false;
+          keydownHandler({
+            key: "Tab",
+            shiftKey: false,
+            preventDefault: () => { prevented = true; }
+          });
+          assert.equal(prevented, true);
+          assert.equal(firstFocused, true);
+
+          // Shift+Tab on first element wraps to last element
+          global.document.activeElement = fakeFirstBtn;
+          prevented = false;
+          keydownHandler({
+            key: "Tab",
+            shiftKey: true,
+            preventDefault: () => { prevented = true; }
+          });
+          assert.equal(prevented, true);
+          assert.equal(lastFocused, true);
+
+          app.destroy();
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+    });
+
+    describe("Screen Reader Regions & Accessible Controls in DLQ and Job Views", () => {
+      it("should associate DLQ inspect buttons with expanded detail regions via aria-controls and role='region'", () => {
+        const dlqState = {
+          selectedQueue: "test-queue",
+          jobs: [{ id: "job-1", failedReason: "Timeout", data: { email: "user@example.com" } }],
+          expandedJobIndex: 0,
+          total: 1
+        };
+        const html = DLQView.render(dlqState, [{ name: "test-queue", metrics: { dlq: 1 } }]);
+        assert.match(html, /aria-controls="dlq-job-detail-0"/);
+        assert.match(html, /aria-expanded="true"/);
+        assert.match(html, /id="dlq-job-detail-0"/);
+        assert.match(html, /<pre class="job-payload-box" tabindex="0" role="region" aria-label="Job Data Payload">/);
+      });
+
+      it("should render accessible progressbar and keyboard-scrollable regions in JobView", () => {
+        const jobState = {
+          selectedQueue: "test-queue",
+          jobId: "job-123",
+          job: {
+            id: "job-123",
+            name: "process-video",
+            progress: 75,
+            data: { videoId: "v1" },
+            returnValue: { status: "rendered" }
+          }
+        };
+        const html = JobView.render(jobState, [{ name: "test-queue", metrics: { waiting: 0 } }]);
+        assert.match(html, /role="progressbar"/);
+        assert.match(html, /aria-valuenow="75"/);
+        assert.match(html, /aria-valuemin="0"/);
+        assert.match(html, /aria-valuemax="100"/);
+        assert.match(html, /aria-label="Job execution progress: 75%"/);
+        assert.match(html, /<pre class="job-payload-box" tabindex="0" role="region" aria-label="Job Payload Data">/);
+        assert.match(html, /<pre class="job-payload-box" tabindex="0" role="region" aria-label="Job Return Value">/);
+      });
+    });
+
+    describe("CSS Accessibility & Responsive Specifications", () => {
+      it("should define prefers-reduced-motion media query in styles.css", () => {
+        const cssPath = path.join(UI_DIR, "styles.css");
+        const css = fs.readFileSync(cssPath, "utf8");
+        assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+        assert.match(css, /animation-duration:\s*0\.01ms/);
+        assert.match(css, /animation:\s*none/);
+      });
+
+      it("should define responsive breakpoints for max-width: 600px and 480px in styles.css", () => {
+        const cssPath = path.join(UI_DIR, "styles.css");
+        const css = fs.readFileSync(cssPath, "utf8");
+        assert.match(css, /@media\s*\(max-width:\s*600px\)/);
+        assert.match(css, /@media\s*\(max-width:\s*480px\)/);
+      });
+
+      it("should define skip-link and high-visibility focus ring styles in styles.css", () => {
+        const cssPath = path.join(UI_DIR, "styles.css");
+        const css = fs.readFileSync(cssPath, "utf8");
+        assert.match(css, /\.skip-link/);
+        assert.match(css, /:focus-visible/);
+        assert.match(css, /outline:/);
+      });
+
+      it("should define WCAG AA compliant colors for skip link, primary button, and badges", () => {
+        const cssPath = path.join(UI_DIR, "styles.css");
+        const css = fs.readFileSync(cssPath, "utf8");
+        assert.match(css, /--accent-focus:\s*#38bdf8/);
+        assert.match(css, /\.skip-link[\s\S]*?background-color:\s*#0369a1/);
+        assert.match(css, /\.badge-unavailable[\s\S]*?color:\s*#cbd5e1/);
+        assert.match(css, /\.overview-toolbar\s+\.form-group/);
+      });
+    });
+
+    describe("Lifecycle Cleanup, Resilient Initialization & Rapid Announcer Debounce", () => {
+      it("should debounce rapid successive announcements and prevent stale timers", async () => {
+        let textHistory = [];
+        const fakeAnnouncer = {
+          set textContent(val) {
+            textHistory.push(val);
+          },
+          get textContent() {
+            return textHistory[textHistory.length - 1] || "";
+          }
+        };
+
+        const originalDoc = global.document;
+        global.document = {
+          getElementById: (id) => (id === "live-announcer" ? fakeAnnouncer : null),
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          activeElement: null
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.announce("Announcement 1");
+          app.announce("Announcement 2");
+          app.announce("Final Announcement");
+
+          await new Promise((r) => setTimeout(r, 80));
+
+          assert.equal(fakeAnnouncer.textContent, "Final Announcement");
+          app.destroy();
+          assert.equal(app._announceTimer, null);
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+
+      it("should clean up bound mobile keydown handler and announce timer upon destroy()", () => {
+        const originalDoc = global.document;
+        let removedEvent = null;
+        let removedHandler = null;
+
+        global.document = {
+          getElementById: () => null,
+          addEventListener: () => {},
+          removeEventListener: (evt, h) => {
+            removedEvent = evt;
+            removedHandler = h;
+          },
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          activeElement: null
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.bindMobileToggle();
+          assert.ok(typeof app._boundMobileKeydown === "function");
+          const handlerRef = app._boundMobileKeydown;
+
+          app.destroy();
+          assert.equal(removedEvent, "keydown");
+          assert.equal(removedHandler, handlerRef);
+          assert.equal(app._boundMobileKeydown, null);
+          assert.equal(app._announceTimer, null);
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+
+      it("should not register duplicate keydown listeners on repeated bindMobileToggle calls", () => {
+        const originalDoc = global.document;
+        let addedCount = 0;
+        let removedCount = 0;
+
+        global.document = {
+          getElementById: () => null,
+          addEventListener: (evt) => {
+            if (evt === "keydown") addedCount++;
+          },
+          removeEventListener: (evt) => {
+            if (evt === "keydown") removedCount++;
+          },
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          activeElement: null
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.bindMobileToggle();
+          app.bindMobileToggle();
+          app.bindMobileToggle();
+
+          assert.equal(addedCount, 3);
+          assert.equal(removedCount, 2);
+          app.destroy();
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+
+      it("should handle completely missing DOM elements in renderView and mobile methods without throwing", () => {
+        const originalDoc = global.document;
+        global.document = {
+          getElementById: () => null,
+          querySelectorAll: () => [],
+          querySelector: () => null,
+          activeElement: null
+        };
+
+        try {
+          const app = new DashboardApp();
+          assert.doesNotThrow(() => {
+            app.bindMobileToggle();
+            app.closeMobileSidebar(true);
+            app.renderView();
+            app.updateNavigationUI();
+            app.updateStatusIndicator("loading", "test");
+            app.destroy();
+          });
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+
+      it("should not steal focus when activeElement is outside the content container", () => {
+        const originalDoc = global.document;
+        let externalElementFocused = false;
+
+        const fakeExternalInput = {
+          id: "poll-interval-select",
+          focus: () => { externalElementFocused = true; },
+          getAttribute: () => null,
+          classList: { contains: () => false }
+        };
+
+        const fakeContainer = {
+          innerHTML: "",
+          contains: (el) => el !== fakeExternalInput
+        };
+
+        global.document = {
+          activeElement: fakeExternalInput,
+          getElementById: (id) => (id === "content-container" ? fakeContainer : null),
+          querySelector: () => null,
+          querySelectorAll: () => []
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.state.activeView = "overview";
+          app.state.queues = [{ name: "email-queue", metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 } }];
+          app.renderView();
+
+          assert.equal(externalElementFocused, false);
+          app.destroy();
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+
+      it("should pass preventScroll: true when restoring focus after re-render", () => {
+        const originalDoc = global.document;
+        let focusOptions = null;
+
+        const fakeSearchInput = {
+          id: "overview-search-input",
+          selectionStart: 0,
+          selectionEnd: 0,
+          addEventListener: () => {},
+          focus: (opts) => { focusOptions = opts; },
+          setSelectionRange: () => {},
+          getAttribute: () => null,
+          classList: { contains: () => false }
+        };
+
+        const fakeContainer = {
+          innerHTML: "",
+          contains: (el) => el === fakeSearchInput
+        };
+
+        global.document = {
+          activeElement: fakeSearchInput,
+          getElementById: (id) =>
+            id === "overview-search-input" ? fakeSearchInput : id === "content-container" ? fakeContainer : null,
+          querySelector: () => null,
+          querySelectorAll: () => []
+        };
+
+        try {
+          const app = new DashboardApp();
+          app.state.activeView = "overview";
+          app.state.queues = [{ name: "email-queue", metrics: { waiting: 0, active: 0, delayed: 0, dlq: 0 } }];
+          app.renderView();
+
+          assert.deepEqual(focusOptions, { preventScroll: true });
+          app.destroy();
+        } finally {
+          global.document = originalDoc;
+        }
+      });
+
+      it("should toggle aria-expanded and detail panel between collapsed and expanded states in DLQView", () => {
+        const dlqCollapsed = {
+          selectedQueue: "emails",
+          jobs: [{ id: "job-1", attempt: 1 }],
+          expandedJobIndex: null,
+          total: 1
+        };
+        const htmlCollapsed = DLQView.render(dlqCollapsed, [{ name: "emails", metrics: { dlq: 1 } }]);
+        assert.match(htmlCollapsed, /aria-expanded="false"/);
+        assert.doesNotMatch(htmlCollapsed, /id="dlq-job-detail-0"/);
+
+        const dlqExpanded = {
+          selectedQueue: "emails",
+          jobs: [{ id: "job-1", attempt: 1 }],
+          expandedJobIndex: 0,
+          total: 1
+        };
+        const htmlExpanded = DLQView.render(dlqExpanded, [{ name: "emails", metrics: { dlq: 1 } }]);
+        assert.match(htmlExpanded, /aria-expanded="true"/);
+        assert.match(htmlExpanded, /id="dlq-job-detail-0"/);
+      });
+    });
+  });
 });
