@@ -1,6 +1,11 @@
 "use strict";
 
-const { createDashboardDispatcher } = require("../dispatcher");
+const {
+  createDashboardDispatcher,
+  resolveUiAssetPath,
+  sendStaticFile,
+  sanitizeErrorMessage
+} = require("../dispatcher");
 
 /**
  * Fastify plugin adapter for @mayurbhusare/resilient-queue-ui.
@@ -22,17 +27,51 @@ function fastifyDashboardPlugin(fastify, options = {}, done) {
   }
 
   fastify.get("/api/queues", routeOptions, async (request, reply) => {
-    const result = await dispatcher.executeQueuesRoute();
-    reply.code(result.status).send(result.body);
+    try {
+      const result = await dispatcher.executeQueuesRoute();
+      reply
+        .header("Cache-Control", "no-store")
+        .header("X-Content-Type-Options", "nosniff")
+        .code(result.status)
+        .send(result.body);
+    } catch (err) {
+      reply
+        .header("Cache-Control", "no-store")
+        .header("X-Content-Type-Options", "nosniff")
+        .code(500)
+        .send({
+          error: {
+            code: "INTERNAL_ERROR",
+            message: sanitizeErrorMessage(err?.message || "Internal server error")
+          }
+        });
+    }
   });
 
   fastify.get(
     "/api/queues/:queueName/metrics",
     routeOptions,
     async (request, reply) => {
-      const rawQueueName = request?.params?.queueName;
-      const result = await dispatcher.executeMetricsRoute(rawQueueName);
-      reply.code(result.status).send(result.body);
+      try {
+        const rawQueueName = request?.params?.queueName;
+        const result = await dispatcher.executeMetricsRoute(rawQueueName);
+        reply
+          .header("Cache-Control", "no-store")
+          .header("X-Content-Type-Options", "nosniff")
+          .code(result.status)
+          .send(result.body);
+      } catch (err) {
+        reply
+          .header("Cache-Control", "no-store")
+          .header("X-Content-Type-Options", "nosniff")
+          .code(500)
+          .send({
+            error: {
+              code: "INTERNAL_ERROR",
+              message: sanitizeErrorMessage(err?.message || "Internal server error")
+            }
+          });
+      }
     }
   );
 
@@ -40,10 +79,27 @@ function fastifyDashboardPlugin(fastify, options = {}, done) {
     "/api/queues/:queueName/dlq",
     routeOptions,
     async (request, reply) => {
-      const rawQueueName = request?.params?.queueName;
-      const query = request?.query || {};
-      const result = await dispatcher.executeDLQRoute(rawQueueName, query);
-      reply.code(result.status).send(result.body);
+      try {
+        const rawQueueName = request?.params?.queueName;
+        const query = request?.query || {};
+        const result = await dispatcher.executeDLQRoute(rawQueueName, query);
+        reply
+          .header("Cache-Control", "no-store")
+          .header("X-Content-Type-Options", "nosniff")
+          .code(result.status)
+          .send(result.body);
+      } catch (err) {
+        reply
+          .header("Cache-Control", "no-store")
+          .header("X-Content-Type-Options", "nosniff")
+          .code(500)
+          .send({
+            error: {
+              code: "INTERNAL_ERROR",
+              message: sanitizeErrorMessage(err?.message || "Internal server error")
+            }
+          });
+      }
     }
   );
 
@@ -51,14 +107,30 @@ function fastifyDashboardPlugin(fastify, options = {}, done) {
     "/api/queues/:queueName/jobs/:jobId",
     routeOptions,
     async (request, reply) => {
-      const rawQueueName = request?.params?.queueName;
-      const rawJobId = request?.params?.jobId;
-      const result = await dispatcher.executeJobRoute(rawQueueName, rawJobId);
-      reply.code(result.status).send(result.body);
+      try {
+        const rawQueueName = request?.params?.queueName;
+        const rawJobId = request?.params?.jobId;
+        const result = await dispatcher.executeJobRoute(rawQueueName, rawJobId);
+        reply
+          .header("Cache-Control", "no-store")
+          .header("X-Content-Type-Options", "nosniff")
+          .code(result.status)
+          .send(result.body);
+      } catch (err) {
+        reply
+          .header("Cache-Control", "no-store")
+          .header("X-Content-Type-Options", "nosniff")
+          .code(500)
+          .send({
+            error: {
+              code: "INTERNAL_ERROR",
+              message: sanitizeErrorMessage(err?.message || "Internal server error")
+            }
+          });
+      }
     }
   );
 
-  const { resolveUiAssetPath, sendStaticFile } = require("../dispatcher");
   const uiRoutes = [
     "/",
     "/index.html",
@@ -81,11 +153,28 @@ function fastifyDashboardPlugin(fastify, options = {}, done) {
 
   for (const route of uiRoutes) {
     fastify.get(route, routeOptions, async (request, reply) => {
-      const asset = resolveUiAssetPath(route);
-      if (asset) {
-        sendStaticFile(reply, asset.fullPath, asset.contentType);
-      } else {
-        reply.code(404).send({ error: { code: "ROUTE_NOT_FOUND", message: "Route not found" } });
+      try {
+        const asset = resolveUiAssetPath(route);
+        if (asset) {
+          sendStaticFile(reply, asset.fullPath, asset.contentType);
+        } else {
+          reply
+            .header("Cache-Control", "no-store")
+            .header("X-Content-Type-Options", "nosniff")
+            .code(404)
+            .send({ error: { code: "ROUTE_NOT_FOUND", message: "Route not found" } });
+        }
+      } catch (err) {
+        reply
+          .header("Cache-Control", "no-store")
+          .header("X-Content-Type-Options", "nosniff")
+          .code(500)
+          .send({
+            error: {
+              code: "INTERNAL_ERROR",
+              message: sanitizeErrorMessage(err?.message || "Internal server error")
+            }
+          });
       }
     });
   }

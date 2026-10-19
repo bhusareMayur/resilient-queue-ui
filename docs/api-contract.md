@@ -114,13 +114,22 @@ When initializing the adapter:
 ### Sensitive Data Warning
 
 > [!WARNING]
-> Job payloads (`job.data`), execution results (`job.result` / `job.returnValue`), and failure diagnostics (`job.failureReason` / `job.lastError`) frequently contain sensitive business data, personally identifiable information (PII), user tokens, or internal system details.
+> Job payloads (`job.data`), execution results (`job.result` / `job.returnValue`), and failure diagnostics (`job.failureReason` / `job.lastError`) frequently contain sensitive business data, personally identifiable information (PII), credentials, customer transaction records, or internal infrastructure details.
 
-### Host-Application Protection Requirement
+### Division of Responsibilities
 
-1. **No Embedded Authentication**: The `@mayurbhusare/resilient-queue-ui` dashboard adapter is deliberately unauthenticated at the library level to avoid enforcing specific auth frameworks.
-2. **Mandatory Host Auth Barrier**: Host applications **MUST** mount dashboard routes behind appropriate authentication and authorization (role-based access control / RBAC) middleware (e.g. session auth, JWT verification, OAuth2 reverse proxy, or API gateway protection).
-3. **No Unprotected Public Exposure**: Dashboard endpoints must never be exposed unauthenticated to the public internet.
+1. **No Embedded Authentication**: The `@mayurbhusare/resilient-queue-ui` package is deliberately unauthenticated to prevent framework lock-in and avoid imposing opinions on your application's security architecture. It provides no login UI, user directory, session cookies, or token validation.
+2. **Mandatory Host Authentication Barrier**: Host applications **MUST** mount dashboard routes and API endpoints behind authentication middleware (e.g. Express session/JWT, Fastify `preHandler` hook, or reverse proxy SSO like OAuth2-Proxy / Cloudflare Access).
+3. **Queue-Level Authorization**: If multiple queues exist with varying sensitivity (e.g. `billing` vs `analytics`), the host application is responsible for inspecting the `:queueName` parameter in middleware and enforcing role-based access control (RBAC).
+4. **No Public Exposure**: Dashboard endpoints must never be exposed unauthenticated to the public internet.
+5. **CORS is Not Authentication**: Enabling Cross-Origin Resource Sharing (CORS) headers (e.g. `Access-Control-Allow-Origin: *`) does **not** authenticate or protect endpoints. Permissive CORS must never be enabled on unauthenticated admin endpoints.
+
+### Protocol Hardening & Error Sanitization
+
+1. **HTTP Caching**: All `/api/*` endpoints explicitly emit `Cache-Control: no-store` to prevent caching of dynamic, sensitive job descriptors or metrics by intermediate proxies or browser caches.
+2. **MIME Sniffing Prevention**: All API responses and static assets emit `X-Content-Type-Options: nosniff`.
+3. **Internal Error Sanitization**: All `500 INTERNAL_ERROR` responses pass error messages through `sanitizeErrorMessage()` to scrub known embedded URI credentials (e.g. `redis://user:pass@host:port` -> `redis://[redacted]@host:port`) and authentication tokens before sending JSON to the client (note: pattern-based scrubbing targets known formats and host applications remain responsible for avoiding secret leakage in worker error messages).
+4. **Detailed Security Guidance**: Complete threat modeling, architectural patterns, and production checklists are documented in [docs/security.md](./security.md).
 
 ---
 

@@ -23,6 +23,25 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
+function sanitizeUiErrorMessage(msg) {
+  if (typeof msg !== "string" || msg.trim().length === 0) {
+    return "Failed to retrieve DLQ jobs.";
+  }
+  let cleaned = msg.replace(
+    /\b([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)(?:[^:\s/@]+:)?([^@\s/]+)@/g,
+    "$1[redacted]@"
+  );
+  cleaned = cleaned.replace(
+    /\b(AUTH|Bearer)\s+['"]?[^\s'";&]+['"]?/gi,
+    "$1 [redacted]"
+  );
+  cleaned = cleaned.replace(
+    /\b(password|passwd|pwd|token|secret|apikey|api_key)(\s*[:=]\s*)['"]?[^\s'";&]+['"]?/gi,
+    "$1$2[redacted]"
+  );
+  return cleaned;
+}
+
 function formatTimestamp(ts) {
   if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) {
     return "-";
@@ -117,7 +136,7 @@ function getDLQDiagnosticInfo(error, queueName) {
 
 function renderDLQError(error, queueName) {
   const code = error?.code || "INTERNAL_ERROR";
-  const message = error?.message || "Failed to retrieve DLQ jobs.";
+  const message = sanitizeUiErrorMessage(error?.message || "Failed to retrieve DLQ jobs.");
   const isNotFound = code === "QUEUE_NOT_FOUND" || error?.status === 404;
   const diag = getDLQDiagnosticInfo(error, queueName);
 
@@ -467,7 +486,8 @@ const DLQView = {
   renderPromptSelect: renderDLQPromptSelect,
   renderTable: renderDLQTable,
   renderJobDetail,
-  getDLQDiagnosticInfo
+  getDLQDiagnosticInfo,
+  sanitizeUiErrorMessage
 };
 
 if (typeof module !== "undefined" && module.exports) {

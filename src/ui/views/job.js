@@ -20,6 +20,25 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
+function sanitizeUiErrorMessage(msg) {
+  if (typeof msg !== "string" || msg.trim().length === 0) {
+    return "Failed to retrieve job descriptor.";
+  }
+  let cleaned = msg.replace(
+    /\b([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)(?:[^:\s/@]+:)?([^@\s/]+)@/g,
+    "$1[redacted]@"
+  );
+  cleaned = cleaned.replace(
+    /\b(AUTH|Bearer)\s+['"]?[^\s'";&]+['"]?/gi,
+    "$1 [redacted]"
+  );
+  cleaned = cleaned.replace(
+    /\b(password|passwd|pwd|token|secret|apikey|api_key)(\s*[:=]\s*)['"]?[^\s'";&]+['"]?/gi,
+    "$1$2[redacted]"
+  );
+  return cleaned;
+}
+
 function formatTimestamp(ts) {
   if (!ts) return "-";
   const num = typeof ts === "number" ? ts : (ts instanceof Date ? ts.getTime() : Date.parse(ts));
@@ -186,7 +205,7 @@ function getJobDiagnosticInfo(error, queueName, jobId) {
 
 function renderJobError(error, queueName, jobId) {
   const code = error?.code || "INTERNAL_ERROR";
-  const message = error?.message || "Failed to retrieve job descriptor.";
+  const message = sanitizeUiErrorMessage(error?.message || "Failed to retrieve job descriptor.");
   const diag = getJobDiagnosticInfo(error, queueName, jobId);
 
   return `
@@ -517,7 +536,8 @@ const JobView = {
   renderError: renderJobError,
   renderJobDetails,
   renderSearchToolbar: renderJobSearchToolbar,
-  getJobDiagnosticInfo
+  getJobDiagnosticInfo,
+  sanitizeUiErrorMessage
 };
 
 if (typeof module !== "undefined" && module.exports) {

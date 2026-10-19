@@ -3,6 +3,7 @@
 const {
   createDashboardDispatcher,
   createErrorResponse,
+  sanitizeErrorMessage,
   sendJson
 } = require("../dispatcher");
 
@@ -25,7 +26,7 @@ function createExpressAdapter(options) {
           500,
           createErrorResponse(
             "INTERNAL_ERROR",
-            err?.message || "Internal server error"
+            sanitizeErrorMessage(err?.message)
           )
         );
       }

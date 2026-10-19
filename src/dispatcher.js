@@ -21,6 +21,44 @@ const MIME_TYPES = {
 };
 
 /**
+ * Sanitizes internal error messages before including them in API responses.
+ * Redacts connection URI credentials, authentication tokens, and passwords based on known patterns,
+ * preventing accidental information leakage of infrastructure details while preserving ordinary diagnostics.
+ *
+ * Note: Pattern-based sanitization targets known credential formats and does not guarantee
+ * elimination of unknown, unstructured, or custom secret representations.
+ *
+ * @param {string|undefined|null} message
+ * @returns {string}
+ */
+function sanitizeErrorMessage(message) {
+  if (typeof message !== "string" || message.trim().length === 0) {
+    return "Internal server error";
+  }
+
+  // 1. Redact credentials in connection URIs (e.g. redis://:pass@host:6379, redis://user:pass@host:6379, including %XX URL encoding)
+  let cleaned = message.replace(
+    /\b([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)(?:[^:\s/@]+:)?([^@\s/]+)@/g,
+    "$1[redacted]@"
+  );
+
+  // 2. Redact AUTH <secret> and Bearer <token>
+  cleaned = cleaned.replace(
+    /\b(AUTH|Bearer)\s+['"]?[^\s'";&]+['"]?/gi,
+    "$1 [redacted]"
+  );
+
+  // 3. Redact key-value secret pairs (password=..., token:..., apikey=...)
+  // Excludes '&' to preserve following query string parameters without corruption
+  cleaned = cleaned.replace(
+    /\b(password|passwd|pwd|token|secret|apikey|api_key)(\s*[:=]\s*)['"]?[^\s'";&]+['"]?/gi,
+    "$1$2[redacted]"
+  );
+
+  return cleaned;
+}
+
+/**
  * Resolves safe absolute path to UI assets inside UI_DIR.
  * Prevents directory traversal, encoded path bypasses, and prefix collisions.
  *
@@ -43,9 +81,18 @@ function resolveUiAssetPath(relPath) {
     return null;
   }
 
+  // Normalize backslashes to forward slashes
+  decoded = decoded.replace(/\\/g, "/");
+
   let clean = decoded.replace(/^\/ui\/?$/, "/index.html").replace(/^\/ui\//, "/").replace(/^\/+/, "");
   if (!clean || clean === "index.html") {
     clean = "index.html";
+  }
+
+  // Reject any segment that starts with a dot (dotfiles / hidden files / traversal)
+  const segments = clean.split("/");
+  if (segments.some((seg) => seg === "." || seg === ".." || seg.startsWith("."))) {
+    return null;
   }
 
   const fullPath = path.resolve(UI_DIR, clean);
@@ -66,9 +113,12 @@ function resolveUiAssetPath(relPath) {
       const stat = fs.statSync(fullPath);
       if (stat.isFile()) {
         const ext = path.extname(fullPath).toLowerCase();
+        if (!MIME_TYPES[ext]) {
+          return null;
+        }
         return {
           fullPath,
-          contentType: MIME_TYPES[ext] || "application/octet-stream"
+          contentType: MIME_TYPES[ext]
         };
       }
     }
@@ -97,9 +147,11 @@ function sendStaticFile(res, filePath, contentType) {
 
     if (typeof res.header === "function") {
       res.header("Cache-Control", "public, max-age=300");
+      res.header("X-Content-Type-Options", "nosniff");
       res.header("Content-Length", Buffer.byteLength(content));
     } else if (typeof res.setHeader === "function") {
       res.setHeader("Cache-Control", "public, max-age=300");
+      res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Content-Length", Buffer.byteLength(content));
     }
 
@@ -145,12 +197,21 @@ function createErrorResponse(code, message, details = null) {
 
 /**
  * Universal helper to write JSON responses across Express, Connect, or native Node http.ServerResponse.
+ * Ensures Cache-Control: no-store is applied to protect dynamic, sensitive queue telemetry.
  *
  * @param {object} res Response object
  * @param {number} status HTTP status code
  * @param {object} body JSON payload
  */
 function sendJson(res, status, body) {
+  if (typeof res.setHeader === "function") {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+  } else if (typeof res.header === "function") {
+    res.header("Cache-Control", "no-store");
+    res.header("X-Content-Type-Options", "nosniff");
+  }
+
   if (typeof res.status === "function") {
     const chain = res.status(status);
     if (chain && typeof chain.json === "function") {
@@ -339,7 +400,7 @@ class DashboardDispatcher {
         status: 500,
         body: createErrorResponse(
           "INTERNAL_ERROR",
-          err?.message || "Internal server error"
+          sanitizeErrorMessage(err?.message)
         )
       };
     }
@@ -375,6 +436,16 @@ class DashboardDispatcher {
         body: createErrorResponse(
           "VALIDATION_ERROR",
           "Invalid URL-encoded queueName parameter"
+        )
+      };
+    }
+
+    if (queueName.includes("\0")) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "queueName cannot contain null bytes"
         )
       };
     }
@@ -432,7 +503,7 @@ class DashboardDispatcher {
         status: 500,
         body: createErrorResponse(
           "INTERNAL_ERROR",
-          err?.message || "Internal server error"
+          sanitizeErrorMessage(err?.message)
         )
       };
     }
@@ -469,6 +540,16 @@ class DashboardDispatcher {
         body: createErrorResponse(
           "VALIDATION_ERROR",
           "Invalid URL-encoded queueName parameter"
+        )
+      };
+    }
+
+    if (queueName.includes("\0")) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "queueName cannot contain null bytes"
         )
       };
     }
@@ -537,7 +618,7 @@ class DashboardDispatcher {
         status: 500,
         body: createErrorResponse(
           "INTERNAL_ERROR",
-          err?.message || "Internal server error"
+          sanitizeErrorMessage(err?.message)
         )
       };
     }
@@ -578,6 +659,16 @@ class DashboardDispatcher {
       };
     }
 
+    if (queueName.includes("\0")) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "queueName cannot contain null bytes"
+        )
+      };
+    }
+
     const trimmedQueueName = queueName.trim();
     if (trimmedQueueName.length === 0) {
       return {
@@ -612,6 +703,16 @@ class DashboardDispatcher {
         body: createErrorResponse(
           "VALIDATION_ERROR",
           "Invalid URL-encoded jobId parameter"
+        )
+      };
+    }
+
+    if (jobId.includes("\0")) {
+      return {
+        status: 400,
+        body: createErrorResponse(
+          "VALIDATION_ERROR",
+          "jobId cannot contain null bytes"
         )
       };
     }
@@ -690,7 +791,7 @@ class DashboardDispatcher {
         status: 500,
         body: createErrorResponse(
           "INTERNAL_ERROR",
-          err?.message || "Internal server error"
+          sanitizeErrorMessage(err?.message)
         )
       };
     }
@@ -809,7 +910,7 @@ class DashboardDispatcher {
         500,
         createErrorResponse(
           "INTERNAL_ERROR",
-          err?.message || "Internal server error"
+          sanitizeErrorMessage(err?.message)
         )
       );
     }
@@ -826,6 +927,7 @@ module.exports = {
   createErrorResponse,
   handleGetQueues,
   parseDLQQueryParams,
+  sanitizeErrorMessage,
   sendJson,
   serializeJob,
   resolveUiAssetPath,
