@@ -299,7 +299,10 @@ function isBrowserAvailable() {
  */
 class HeadlessBrowserSession {
   constructor(options = {}) {
-    this.chromePath = options.chromePath || findChromiumPath();
+    this.chromePath = options.chromePath !== undefined ? options.chromePath : findChromiumPath();
+    this.launchTimeoutMs = Number(
+      options.launchTimeoutMs || process.env.BROWSER_LAUNCH_TIMEOUT_MS || 30000
+    );
     this.userDataDir = null;
     this.chromeProc = null;
     this.port = null;
@@ -328,7 +331,25 @@ class HeadlessBrowserSession {
       "--disable-gpu",
       "--no-first-run",
       "--no-default-browser-check",
-      "--window-size=1280,800"
+      "--window-size=1280,800",
+      "--disable-background-networking",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-breakpad",
+      "--disable-client-side-phishing-detection",
+      "--disable-component-extensions-with-background-pages",
+      "--disable-default-apps",
+      "--disable-extensions",
+      "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
+      "--disable-ipc-flooding-protection",
+      "--disable-popup-blocking",
+      "--disable-prompt-on-repost",
+      "--disable-renderer-backgrounding",
+      "--disable-sync",
+      "--force-color-profile=srgb",
+      "--metrics-recording-only",
+      "--password-store=basic",
+      "--use-mock-keychain"
     ];
 
     let stderrOutput = "";
@@ -343,8 +364,10 @@ class HeadlessBrowserSession {
 
     // Wait for DevToolsActivePort file
     const activePortPath = path.join(this.userDataDir, "DevToolsActivePort");
-    for (let i = 0; i < 60; i++) {
+    const maxRetries = Math.max(10, Math.ceil(this.launchTimeoutMs / 100));
+    for (let i = 0; i < maxRetries; i++) {
       if (this.chromeProc.exitCode !== null) {
+        await this.close();
         throw new Error(
           `Chrome process exited prematurely with code ${this.chromeProc.exitCode}. Stderr: ${stderrOutput.trim() || "(none)"}`
         );
@@ -352,7 +375,7 @@ class HeadlessBrowserSession {
       if (fs.existsSync(activePortPath)) {
         try {
           const content = fs.readFileSync(activePortPath, "utf8").trim().split("\n");
-          if (content[0]) {
+          if (content[0] && parseInt(content[0], 10)) {
             this.port = parseInt(content[0], 10);
             break;
           }
@@ -362,78 +385,102 @@ class HeadlessBrowserSession {
     }
 
     if (!this.port) {
+      await this.close();
       throw new Error(
-        `Failed to detect DevToolsActivePort from Chrome process. Stderr: ${stderrOutput.trim() || "(none)"}`
+        `Failed to detect DevToolsActivePort from Chrome process within ${this.launchTimeoutMs}ms. Stderr: ${stderrOutput.trim() || "(none)"}`
       );
     }
 
-    // Connect to browser target
-    const versionData = await new Promise((resolve, reject) => {
-      http
-        .get(`http://127.0.0.1:${this.port}/json/version`, (res) => {
-          let b = "";
-          res.on("data", (c) => (b += c));
-          res.on("end", () => resolve(JSON.parse(b)));
-        })
-        .on("error", reject);
-    });
-
-    this.browserCdp = new CdpWebSocket(versionData.webSocketDebuggerUrl);
-    await this.browserCdp.connect();
-
-    // Create a new blank page target
-    const target = await this.browserCdp.send("Target.createTarget", { url: "about:blank" });
-    this.targetId = target.targetId;
-
-    // Get page ws url from /json/list
-    const targets = await new Promise((resolve, reject) => {
-      http
-        .get(`http://127.0.0.1:${this.port}/json/list`, (res) => {
-          let b = "";
-          res.on("data", (c) => (b += c));
-          res.on("end", () => resolve(JSON.parse(b)));
-        })
-        .on("error", reject);
-    });
-
-    const pageTarget = targets.find((t) => t.id === this.targetId);
-    if (!pageTarget) {
-      throw new Error(`Target ${this.targetId} not found in targets list`);
-    }
-
-    this.pageCdp = new CdpWebSocket(pageTarget.webSocketDebuggerUrl);
-    await this.pageCdp.connect();
-
-    await this.pageCdp.send("Page.enable");
-    await this.pageCdp.send("Runtime.enable");
-    await this.pageCdp.send("DOM.enable");
-    await this.pageCdp.send("Network.enable");
-
-    // Track network responses
-    this.networkResponses = [];
-    this.pageCdp.on("Network.responseReceived", (params) => {
-      this.networkResponses.push({
-        url: params.response?.url,
-        status: params.response?.status,
-        headers: params.response?.headers,
-        mimeType: params.response?.mimeType
+    try {
+      // Connect to browser target
+      const versionData = await new Promise((resolve, reject) => {
+        const req = http
+          .get(`http://127.0.0.1:${this.port}/json/version`, (res) => {
+            let b = "";
+            res.on("data", (c) => (b += c));
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(b));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          })
+          .on("error", reject);
+        req.setTimeout(10000, () => {
+          req.destroy(new Error("Timeout connecting to /json/version"));
+        });
       });
-    });
 
-    // Track console and runtime errors
-    this.pageCdp.on("Runtime.consoleAPICalled", (params) => {
-      const text = params.args ? params.args.map((a) => a.value ?? a.description ?? "").join(" ") : "";
-      this.consoleMessages.push({ type: params.type, text });
-      if (params.type === "error") {
-        this.consoleErrors.push(text);
+      this.browserCdp = new CdpWebSocket(versionData.webSocketDebuggerUrl);
+      await this.browserCdp.connect();
+
+      // Create a new blank page target
+      const target = await this.browserCdp.send("Target.createTarget", { url: "about:blank" });
+      this.targetId = target.targetId;
+
+      // Get page ws url from /json/list
+      const targets = await new Promise((resolve, reject) => {
+        const req = http
+          .get(`http://127.0.0.1:${this.port}/json/list`, (res) => {
+            let b = "";
+            res.on("data", (c) => (b += c));
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(b));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          })
+          .on("error", reject);
+        req.setTimeout(10000, () => {
+          req.destroy(new Error("Timeout querying /json/list"));
+        });
+      });
+
+      const pageTarget = targets.find((t) => t.id === this.targetId);
+      if (!pageTarget) {
+        throw new Error(`Target ${this.targetId} not found in targets list`);
       }
-    });
 
-    this.pageCdp.on("Runtime.exceptionThrown", (params) => {
-      const desc = params.exceptionDetails?.exception?.description || params.exceptionDetails?.text || "Unknown exception";
-      this.pageErrors.push(desc);
-      this.consoleErrors.push(desc);
-    });
+      this.pageCdp = new CdpWebSocket(pageTarget.webSocketDebuggerUrl);
+      await this.pageCdp.connect();
+
+      await this.pageCdp.send("Page.enable");
+      await this.pageCdp.send("Runtime.enable");
+      await this.pageCdp.send("DOM.enable");
+      await this.pageCdp.send("Network.enable");
+
+      // Track network responses
+      this.networkResponses = [];
+      this.pageCdp.on("Network.responseReceived", (params) => {
+        this.networkResponses.push({
+          url: params.response?.url,
+          status: params.response?.status,
+          headers: params.response?.headers,
+          mimeType: params.response?.mimeType
+        });
+      });
+
+      // Track console and runtime errors
+      this.pageCdp.on("Runtime.consoleAPICalled", (params) => {
+        const text = params.args ? params.args.map((a) => a.value ?? a.description ?? "").join(" ") : "";
+        this.consoleMessages.push({ type: params.type, text });
+        if (params.type === "error") {
+          this.consoleErrors.push(text);
+        }
+      });
+
+      this.pageCdp.on("Runtime.exceptionThrown", (params) => {
+        const desc = params.exceptionDetails?.exception?.description || params.exceptionDetails?.text || "Unknown exception";
+        this.pageErrors.push(desc);
+        this.consoleErrors.push(desc);
+      });
+    } catch (err) {
+      await this.close();
+      throw err;
+    }
   }
 
   async navigate(url) {
@@ -603,6 +650,9 @@ class HeadlessBrowserSession {
     }
     if (this.browserCdp) {
       try {
+        if (!this.browserCdp.isClosed) {
+          await this.browserCdp.send("Browser.close", {}, 2000).catch(() => {});
+        }
         this.browserCdp.close();
       } catch {}
       this.browserCdp = null;
@@ -621,12 +671,12 @@ class HeadlessBrowserSession {
       this.chromeProc = null;
     }
     if (this.userDataDir) {
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 5; attempt++) {
         try {
           fs.rmSync(this.userDataDir, { recursive: true, force: true });
           break;
         } catch {
-          await new Promise((r) => setTimeout(r, 50));
+          await new Promise((r) => setTimeout(r, 100));
         }
       }
       this.userDataDir = null;
