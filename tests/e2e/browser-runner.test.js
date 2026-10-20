@@ -4,7 +4,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { CdpWebSocket, findChromiumPath, isBrowserAvailable } = require("./browser-runner");
+const { CdpWebSocket, findChromiumPath, isBrowserAvailable, HeadlessBrowserSession } = require("./browser-runner");
 
 describe("CDP WebSocket & Browser Runner Protocol Unit Tests", () => {
   it("should find browser or report status without error", () => {
@@ -274,5 +274,32 @@ describe("CDP WebSocket & Browser Runner Protocol Unit Tests", () => {
       }
       await new Promise((resolve) => server.close(resolve));
     }
+  });
+  it("should initialize HeadlessBrowserSession with default or customized launch timeout", () => {
+    const sessionDefault = new HeadlessBrowserSession();
+    assert.equal(sessionDefault.launchTimeoutMs, 30000);
+
+    const sessionCustom = new HeadlessBrowserSession({ launchTimeoutMs: 15000 });
+    assert.equal(sessionCustom.launchTimeoutMs, 15000);
+
+    const origEnv = process.env.BROWSER_LAUNCH_TIMEOUT_MS;
+    try {
+      process.env.BROWSER_LAUNCH_TIMEOUT_MS = "45000";
+      const sessionEnv = new HeadlessBrowserSession();
+      assert.equal(sessionEnv.launchTimeoutMs, 45000);
+    } finally {
+      if (origEnv !== undefined) {
+        process.env.BROWSER_LAUNCH_TIMEOUT_MS = origEnv;
+      } else {
+        delete process.env.BROWSER_LAUNCH_TIMEOUT_MS;
+      }
+    }
+  });
+
+  it("should fail gracefully and clean up if browser binary does not exist", async () => {
+    const session = new HeadlessBrowserSession({ chromePath: null });
+    await assert.rejects(async () => {
+      await session.launch();
+    }, /No Chromium or Chrome binary found on system/);
   });
 });
